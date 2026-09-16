@@ -1,0 +1,10 @@
+{
+  "name": "questmaker",
+  "version": "0.2.0",
+  "private": true,
+  "description": "A static drawing questionnaire editor for GitHub Pages",
+  "scripts": {
+    "check": "node --check app.js",
+    "test": "node tests/verify.cjs && node tests/revisions.cjs && node tests/typography.cjs && node tests/layout-editors.cjs && node tests/rich-color.cjs && node tests/canvas-widgets.cjs && node tests/slider-drag.cjs && node tests/relation-corners.cjs"
+  }
+}

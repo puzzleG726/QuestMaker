@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f2f7">
+  <meta name="description" content="QuestMaker，制作你的绘画问卷。">
+  <title>QuestMaker · 制作你的绘画问卷</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script defer src="./vendor/lucide.min.js"></script>
+  <script defer src="./vendor/html2canvas.min.js"></script>
+  <script defer src="./app.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <button id="homeButton" class="brand" aria-label="QuestMaker 首页"><i data-lucide="panels-top-left"></i>QuestMaker</button>
+    <span id="breadcrumb" class="breadcrumb"></span>
+    <div id="editorActions" class="header-actions" hidden>
+      <button id="undoButton" class="icon-button" aria-label="撤销" data-tooltip="撤销"><i data-lucide="undo-2"></i></button>
+      <button id="redoButton" class="icon-button" aria-label="重做" data-tooltip="重做"><i data-lucide="redo-2"></i></button>
+      <button id="exportButton" class="primary"><i data-lucide="download"></i>导出图片</button>
+    </div>
+  </header>
+  <main id="homeView" class="home-view">
+    <div class="home-heading"><span class="eyebrow">QuestMaker</span><h1>制作你的绘画问卷</h1></div>
+    <div id="templates" class="templates"></div>
+    <footer class="home-footer">QuestMaker</footer>
+  </main>
+  <main id="editorView" hidden>
+    <div class="toolbar">
+      <div class="tool-group">
+        <label class="style-picker"><i data-lucide="type"></i><select id="textStyle" aria-label="文字样式"><option value="title1">Title 1</option><option value="title2">Title 2</option><option value="body" selected>Body</option></select></label>
+        <label class="color-tool" data-tooltip="文字颜色"><i data-lucide="baseline"></i><input id="textColor" type="color" value="#343139" aria-label="文字颜色"></label>
+        <button id="boldButton" class="icon-button" aria-label="加粗" data-tooltip="加粗"><i data-lucide="bold"></i></button>
+        <button class="icon-button" data-align="left" aria-label="左对齐" data-tooltip="左对齐"><i data-lucide="align-left"></i></button>
+        <button class="icon-button" data-align="center" aria-label="居中" data-tooltip="居中"><i data-lucide="align-center"></i></button>
+        <button class="icon-button" data-align="right" aria-label="右对齐" data-tooltip="右对齐"><i data-lucide="align-right"></i></button>
+      </div>
+      <div class="tool-group extra-tools">
+        <button id="addText"><i data-lucide="type"></i>添加文字</button>
+        <button id="linkMode" hidden><i data-lucide="move-up-right"></i>连线</button>
+        <span class="alignment-status"><i data-lucide="scan-line"></i>自动对齐</span>
+      </div>
+      <div id="lineToolbar" class="line-toolbar" hidden aria-label="连线编辑"></div>
+    </div>
+    <div class="workspace">
+      <section class="stage" aria-label="问卷编辑画布"><div class="paper-info"><span id="paperName"></span><span id="dimensions"></span></div><div id="sheetFrame"><article id="sheet" class="sheet"></article></div></section>
+      <aside class="properties" aria-label="编辑设置"><div id="selectionProperties"></div><div id="layoutProperties"></div></aside>
+    </div>
+  </main>
+  <input id="imageUpload" type="file" accept="image/*" hidden>
+  <dialog id="exportDialog">
+    <form method="dialog"><div class="dialog-heading"><h2>导出图片</h2><button class="icon-button" aria-label="关闭"><i data-lucide="x"></i></button></div></form>
+    <label class="field">图片格式<select id="exportFormat"><option value="png">PNG</option><option value="jpeg">JPG</option><option value="webp">WebP</option></select></label>
+    <label class="field">清晰度<select id="exportScale"><option value="2">高清 · 2 倍</option><option value="1">标准 · 1 倍</option><option value="3">超清 · 3 倍</option></select></label>
+    <p id="exportDimensions" class="secondary"></p><button id="downloadButton" class="primary full"><i data-lucide="download"></i>下载图片</button>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
