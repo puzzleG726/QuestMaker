@@ -46,10 +46,10 @@ const sharp=require(path.join(modules,'sharp'));
     await page.locator('#sheet [data-drag-block="'+id+'"]').scrollIntoViewIfNeeded();
     // Keep source and destination visible while testing a widget reorder.
     await page.setViewportSize({width:1440,height:2600});await page.evaluate(()=>scrollTo(0,0));
-    const target=await page.locator('#sheet [data-component="voice"]').boundingBox();
+    const target=await page.locator('#sheet [data-component="pace"]').boundingBox();
     await drag('#sheet [data-drag-block="'+id+'"]',target.x+10,target.y+3);
-    const order=await page.locator('#sheet [data-component]').evaluateAll(es=>es.map(e=>e.dataset.component));assert(order.indexOf(id)<order.indexOf('voice'));
-    assert.equal(await page.locator('#sheet [data-component="'+id+'"] .rich').evaluate(e=>e.offsetWidth),await page.locator('#sheet [data-component="voice"]').evaluate(e=>e.offsetWidth));
+    const order=await page.locator('#sheet [data-component]').evaluateAll(es=>es.map(e=>e.dataset.component));assert(order.includes(id)&&order.indexOf(id)<order.indexOf('pace'));
+    assert.equal(await page.locator('#sheet [data-component="'+id+'"] .rich').evaluate(e=>e.offsetWidth),await page.locator('#sheet .compat-body').evaluate(e=>e.offsetWidth));
     await page.locator('#undoButton').click();await page.locator('#redoButton').click();assert.equal(await page.locator('#sheet [data-kind="text"]').count(),1);
     await page.locator('#editLegends').click();for(let i=0;i<3;i++)await page.locator('[data-delete-legend]').first().click();
     await page.locator(choice).click();assert.equal(await bg(choice),'rgb(17, 153, 85)');await page.locator(choice).click();assert.equal(await page.locator(choice).getAttribute('aria-checked'),'false');

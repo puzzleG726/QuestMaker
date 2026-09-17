@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f4f2f7">
   <meta name="description" content="QuestMaker，制作你的绘画问卷。">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>QuestMaker · 制作你的绘画问卷</title>
   <link rel="stylesheet" href="./styles.css">
   <script defer src="./vendor/lucide.min.js"></script>
@@ -24,7 +26,7 @@
   <main id="homeView" class="home-view">
     <div class="home-heading"><span class="eyebrow">QuestMaker</span><h1>制作你的绘画问卷</h1></div>
     <div id="templates" class="templates"></div>
-    <footer class="home-footer">QuestMaker</footer>
+    <footer class="home-footer">&copy; 2026 puzzleG726 · QuestMaker · <a href="./LICENSE" target="_blank" rel="noopener">版权声明</a></footer>
   </main>
   <main id="editorView" hidden>
     <div class="toolbar">
@@ -44,11 +46,25 @@
       <div id="lineToolbar" class="line-toolbar" hidden aria-label="连线编辑"></div>
     </div>
     <div class="workspace">
-      <section class="stage" aria-label="问卷编辑画布"><div class="paper-info"><span id="paperName"></span><span id="dimensions"></span></div><div id="sheetFrame"><article id="sheet" class="sheet"></article></div></section>
+      <section class="stage" aria-label="问卷编辑画布">
+        <div class="paper-info"><span id="paperName"></span><span id="dimensions"></span><div class="canvas-zoom" aria-label="画布缩放">
+          <button id="zoomOut" class="icon-button" aria-label="缩小画布" data-tooltip="缩小画布"><i data-lucide="zoom-out"></i></button>
+          <output id="zoomLevel" aria-label="当前缩放比例">100%</output>
+          <button id="zoomIn" class="icon-button" aria-label="放大画布" data-tooltip="放大画布"><i data-lucide="zoom-in"></i></button>
+          <button id="zoomFit" class="icon-button" aria-label="适应屏幕" data-tooltip="适应屏幕"><i data-lucide="maximize"></i></button>
+        </div></div>
+        <div id="canvasViewport" tabindex="0" aria-label="画布查看区域"><div id="sheetFrame"><article id="sheet" class="sheet"></article></div></div>
+      </section>
       <aside class="properties" aria-label="编辑设置"><div id="selectionProperties"></div><div id="layoutProperties"></div></aside>
     </div>
   </main>
   <input id="imageUpload" type="file" accept="image/*" hidden>
+  <dialog id="cropDialog" aria-labelledby="cropTitle">
+    <div class="dialog-heading"><h2 id="cropTitle">裁剪图片</h2><button id="closeCrop" class="icon-button" aria-label="关闭裁剪"><i data-lucide="x"></i></button></div>
+    <div class="crop-surface"><canvas id="cropCanvas" tabindex="0" role="img" aria-label="图片裁剪区域，可拖动选区或四角调整，方向键移动选区"></canvas></div>
+    <div class="crop-settings"><label class="field">裁剪比例<select id="cropAspect"><option value="frame">图片框比例</option><option value="free">自由比例</option><option value="1">1:1</option></select></label><output id="cropDimensions" aria-live="polite"></output><button id="resetCrop" class="icon-button" aria-label="恢复原图" data-tooltip="恢复原图"><i data-lucide="rotate-ccw"></i></button></div>
+    <div class="dialog-actions"><button id="cancelCrop">取消</button><button id="applyCrop" class="primary"><i data-lucide="check"></i>应用裁剪</button></div>
+  </dialog>
   <dialog id="exportDialog">
     <form method="dialog"><div class="dialog-heading"><h2>导出图片</h2><button class="icon-button" aria-label="关闭"><i data-lucide="x"></i></button></div></form>
     <label class="field">图片格式<select id="exportFormat"><option value="png">PNG</option><option value="jpeg">JPG</option><option value="webp">WebP</option></select></label>

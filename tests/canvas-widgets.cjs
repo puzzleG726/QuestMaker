@@ -47,7 +47,7 @@ const sharp = require(path.join(modules, 'sharp'));
         return { top: parseFloat(s.paddingTop), bottom: parseFloat(s.paddingBottom), font: getComputedStyle(el.querySelector('.respondent')).fontSize };
       });
       assert.equal(style.font, '17px'); assert.equal(style.bottom, 9.6);
-      assert.equal(style.top, mode === 2 ? 12.8 : 19.2);
+      assert.equal(style.top, mode === 2 ? 25.6 : 38.4);
       await page.locator('#sheet [data-text="title"]').click();
       await color('#textFill', '#ddeeff');
       assert.equal(await page.locator('#sheet [data-text="title"]').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(221, 238, 255)');

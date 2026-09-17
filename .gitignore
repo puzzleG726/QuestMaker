@@ -39,3 +39,7 @@ next-env.d.ts
 
 # local editor hosting metadata
 /.openai/
+/_site/
+*.p12
+*.pfx
+*.key

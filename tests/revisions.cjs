@@ -56,7 +56,7 @@ const sharp=require(path.join(modules,'sharp'));
   await page.locator('#sheet [data-image="grid-0"]').click({position:{x:8,y:8}});await page.locator('#addFrameText').click();
   await page.locator('#sheet [data-image="grid-0"]').click({position:{x:8,y:8}});assert(await page.locator('#addFrameText').isDisabled());
   await page.locator('#sheet [data-text="title"]').click();await page.locator('#addText').click();
-  const free=page.locator('#sheet .free-text');assert.equal(await free.count(),1);
+  const free=page.locator('#sheet .flow-text');assert.equal(await free.count(),1);
   const target=await page.locator('#sheet [data-frame="grid-1"]').boundingBox();
   await drag(free.locator('[data-drag-text]'),target.x+target.width/2,target.y-28);
   assert.equal(await page.locator('#sheet .frame-group .above-text').count(),1);
@@ -99,7 +99,7 @@ const sharp=require(path.join(modules,'sharp'));
   for(const [type,key] of [[0,'rank-1-0'],[2,'node-2'],[3,'portrait-0']]){
     await open(type);
     if(type===3){await page.locator('#sheet [data-image="'+key+'"]').click();await page.locator('#addFrameText').click();await page.locator('#textPlacement').selectOption('free');}
-    else{await page.locator('#sheet [data-text="title"]').click();await page.locator('#addText').click();}
+    else{await page.locator('#sheet [data-text="title"]').click();await page.locator('#addText').click();await page.locator('#textPlacement').selectOption('free');}
     await page.locator('#sheet [data-frame="'+key+'"]').scrollIntoViewIfNeeded();
     const before=await page.locator('#sheet [data-frame="'+key+'"]').boundingBox();
     await drag(page.locator('#sheet .free-text [data-drag-text]').last(),before.x+before.width/2,before.y-28);

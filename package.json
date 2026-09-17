@@ -5,6 +5,6 @@
   "description": "A static drawing questionnaire editor for GitHub Pages",
   "scripts": {
     "check": "node --check app.js",
-    "test": "node tests/verify.cjs && node tests/revisions.cjs && node tests/typography.cjs && node tests/layout-editors.cjs && node tests/rich-color.cjs && node tests/canvas-widgets.cjs && node tests/slider-drag.cjs && node tests/relation-corners.cjs"
+    "test": "node tests/verify.cjs && node tests/revisions.cjs && node tests/typography.cjs && node tests/layout-editors.cjs && node tests/rich-color.cjs && node tests/canvas-widgets.cjs && node tests/slider-drag.cjs && node tests/relation-corners.cjs && node tests/text-flow.cjs && node tests/crop-linebreaks.cjs"
   }
 }
