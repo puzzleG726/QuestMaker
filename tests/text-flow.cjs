@@ -124,7 +124,8 @@ const sharp = require(path.join(modules, 'sharp'));
     assert.equal(await text(key).evaluate(el => el.closest('[data-component]').nextElementSibling.dataset.component), 'expression');
     const body = await page.locator('#sheet .compat-body').boundingBox();
     await drag(text(key).locator('..').locator('[data-drag-block]'), body.x + body.width / 2, body.y + 2);
-    assert.equal(await page.locator('#sheet .layout-top .rich').count(), 1, 'Component text drags into a full row above layout');
+    assert.equal(await page.locator('#sheet .layout-top .rich').count(), 0, 'Component text retains widget placement');
+    assert.equal(await text(key).evaluate(el => el.closest('[data-component]').dataset.kind), 'text');
     await page.screenshot({ path: path.join(out, 'desktop.png'), fullPage: true });
 
     await open(1); await number('#rows', 1);

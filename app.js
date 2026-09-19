@@ -3419,57 +3419,60 @@
     );
   }
   function startBlockDrag(event, id) {
-    const textBlock = current().blocks.find(
-      (b) => b.id === id && b.type === "text",
-    );
-    if (textBlock) {
-      startTextDrag(event, textBlock.textKey || id + "-text");
-      return;
-    }
     const doc = current(),
       source = $('[data-component="' + id + '"]', sheet);
     flushHistory();
-    let target = null,
-      after = false,
-      slot = "full";
+    const initial = JSON.parse(JSON.stringify(doc)), positions = widgetPositions(sheet),
+      body = paperRect($(".compat-body", sheet)), origin = positions[id],
+      scale = sheet.getBoundingClientRect().width / sheet.offsetWidth,
+      start = { x: event.clientX, y: event.clientY }, cache = new Map();
+    const preview = document.createElement("div");
+    preview.className = "widget-insertion-preview";
+    preview.dataset.html2canvasIgnore = "";
+    preview.hidden = true;
+    sheet.append(preview);
+    let beforeId = null, slot = blockSlot(doc, doc.blocks.find(b => b.id === id)), ready = false;
     source.classList.add("widget-dragging");
     dragSession(
       event,
       (e) => {
-        const body = $(".compat-body", sheet).getBoundingClientRect(),
-          fraction = (e.clientX - body.left) / body.width;
+        const root = sheet.getBoundingClientRect(),
+          x = (e.clientX - root.left) / scale, y = (e.clientY - root.top) / scale,
+          fraction = (x - body.x) / body.width;
+        const ghostX = clamp(origin.x + (e.clientX - start.x) / scale, body.x, body.x + body.width - origin.width);
+        source.style.translate = (ghostX - origin.x) + "px " + (e.clientY - start.y) / scale + "px";
         slot = fraction < 0.34 ? "left" : fraction > 0.66 ? "right" : "full";
-        const distance = (el) => {
-          const r = el.getBoundingClientRect(),
-            dx = Math.max(r.left - e.clientX, 0, e.clientX - r.right),
-            dy = Math.min(
-              Math.abs(e.clientY - r.top),
-              Math.abs(e.clientY - r.bottom),
-            );
-          return dx * dx + dy * dy;
-        };
-        const candidates = $$("[data-component]", sheet).filter(
-          (el) => el !== source,
-        );
-        target = candidates.sort((a, b) => distance(a) - distance(b))[0];
-        $$(".widget-drop", sheet).forEach((el) =>
-          el.classList.remove("widget-drop"),
-        );
-        if (target) {
-          const r = target.getBoundingClientRect();
-          after = e.clientY > r.top + r.height / 2;
-          target.classList.add("widget-drop");
-          target.dataset.drop = after ? "after" : "before";
-          target.dataset.dropSlot = slot;
+        const rest = initial.blocks.filter(b => b.id !== id);
+        const candidates = rest.map((b, index) => {
+          const r = positions[b.id], dx = Math.max(r.x - x, 0, x - r.x - r.width),
+            after = y > r.y + r.height / 2;
+          return { index: index + (after ? 1 : 0), distance: dx * dx + Math.min(Math.abs(y - r.y), Math.abs(y - r.y - r.height)) ** 2 };
+        });
+        const nearest = candidates.sort((a, b) => a.distance - b.distance)[0];
+        beforeId = rest[nearest?.index ?? rest.length]?.id || null;
+        const token = beforeId + ":" + slot;
+        if (!cache.has(token)) {
+          const candidate = JSON.parse(JSON.stringify(initial)), block = candidate.blocks.find(b => b.id === id);
+          candidate.blocks = candidate.blocks.filter(b => b.id !== id);
+          block.slot = slot;
+          candidate.blocks.splice(beforeId ? candidate.blocks.findIndex(b => b.id === beforeId) : candidate.blocks.length, 0, block);
+          candidate.widgetsMoved = true;
+          cache.set(token, measureDropLayout(candidate, null, id));
         }
+        const result = cache.get(token);
+        preview.hidden = false;
+        Object.assign(preview.style, { left: result.x + "px", top: result.y + "px", width: result.width + "px", height: result.height + "px" });
+        showWidgetReflow(positions, result.widgets, id);
+        ready = true;
       },
       (e, moved) => {
-        if (moved && e.type !== "pointercancel") {
+        preview.remove();
+        clearWidgetReflow();
+        if (moved && ready && e.type !== "pointercancel") {
           const from = doc.blocks.findIndex((b) => b.id === id),
             [block] = doc.blocks.splice(from, 1),
-            at = target
-              ? doc.blocks.findIndex((b) => b.id === target.dataset.component) +
-                (after ? 1 : 0)
+            at = beforeId
+              ? doc.blocks.findIndex((b) => b.id === beforeId)
               : doc.blocks.length;
           block.slot = slot;
           doc.blocks.splice(Math.max(0, at), 0, block);
@@ -3599,6 +3602,30 @@
       if (block) doc.blocks = doc.blocks.filter(item => item !== block);
       doc.textBoxes[key] = { ...doc.textBoxes[key], ...destination };
     } else applyTextPlacement(doc, key, destination.placement, bounds);
+    return measureDropLayout(doc, key);
+  }
+  function widgetPositions(target) {
+    const root = target.getBoundingClientRect(), scale = root.width / target.offsetWidth;
+    return Object.fromEntries($$("[data-component]", target).map(el => {
+      const r = el.getBoundingClientRect();
+      return [el.dataset.component, { x: (r.x - root.x) / scale, y: (r.y - root.y) / scale, width: r.width / scale, height: r.height / scale }];
+    }));
+  }
+  function clearWidgetReflow() {
+    $$(".widget-reflow", sheet).forEach(el => {
+      el.classList.remove("widget-reflow");
+      el.style.removeProperty("translate");
+    });
+  }
+  function showWidgetReflow(before, after, excludedId) {
+    for (const [id, next] of Object.entries(after || {})) {
+      const prior = before[id], el = $('[data-component="' + id + '"]', sheet);
+      if (!prior || !el || id === excludedId) continue;
+      el.classList.add("widget-reflow");
+      el.style.translate = (next.x - prior.x) + "px " + (next.y - prior.y) + "px";
+    }
+  }
+  function measureDropLayout(doc, key, componentId = null) {
     // Measure the same layout used on drop, once per destination during a drag.
     const probe = document.createElement("div");
     probe.className = "sheet text-snap-measure";
@@ -3607,11 +3634,13 @@
     document.body.append(probe);
     try {
       renderSheet(doc, probe);
-      const text = $('[data-text="' + key + '"]', probe);
+      const text = componentId ? $('[data-component="' + componentId + '"]', probe) : $('[data-text="' + key + '"]', probe);
       const element = text.closest("[data-text-box],[data-component]") || text;
       const root = probe.getBoundingClientRect(), rect = element.getBoundingClientRect();
-      const object = destination.frame ? $('[data-frame="' + destination.frame + '"]', probe).getBoundingClientRect() : null;
+      const frame = key && doc.textBoxes[key]?.frame;
+      const object = frame ? $('[data-frame="' + frame + '"]', probe).getBoundingClientRect() : null;
       return { x: rect.left - root.left, y: rect.top - root.top, width: rect.width, height: rect.height,
+        widgets: doc.type === 3 ? widgetPositions(probe) : null,
         object: object && { x: object.left - root.left, y: object.top - root.top, width: object.width, height: object.height } };
     } finally {
       probe.remove();
@@ -3631,12 +3660,13 @@
       sy = event.clientY;
     flushHistory();
     const original = { ...box };
-    const previewDoc = JSON.parse(JSON.stringify(doc)), previewCache = new Map();
+    const previewDoc = JSON.parse(JSON.stringify(doc)), previewCache = new Map(), initialWidgets = widgetPositions(sheet),
+      frameTargets = $$("[data-frame]", sheet).map(frame => ({ key: frame.dataset.frame, bounds: paperRect(frame) }));
     const preview = document.createElement("div");
     preview.className = "text-snap-preview";
     preview.dataset.html2canvasIgnore = "";
     preview.setAttribute("aria-hidden", "true");
-    preview.innerHTML = '<div class="text-snap-object"></div><div class="text-snap-destination"><span></span></div>';
+    preview.innerHTML = '<div class="text-snap-object"></div><div class="text-snap-destination"></div>';
     preview.hidden = true;
     sheet.append(preview);
     const body = $(".rank-body,.grid-body,.relation-map,.compat-body", sheet),
@@ -3703,8 +3733,8 @@
         $$(".snap-target,.flow-drop,.text-snap-target-muted", sheet).forEach((node) =>
           node.classList.remove("snap-target", "flow-drop", "text-snap-target-muted"),
         );
-        $$("[data-frame]", sheet).forEach((frame) => {
-          const b = paperRect(frame);
+        frameTargets.forEach((frame) => {
+          const b = frame.bounds;
           if (
             cx >= b.x &&
             cx <= b.x + b.width &&
@@ -3712,7 +3742,7 @@
             cy <= b.y + b.height
           ) {
             target = {
-              frame: frame.dataset.frame,
+              frame: frame.key,
               placement: cy < b.y + 8 ? "above" : "inside",
             };
             targetObject = b;
@@ -3744,11 +3774,13 @@
           for (const [selector, rect] of [[".text-snap-object", targetObject], [".text-snap-destination", destination]]) {
             Object.assign($(selector, preview).style, { left: rect.x + "px", top: rect.y + "px", width: rect.width + "px", height: rect.height + "px" });
           }
-          $("span", preview).textContent = target.frame ? (target.placement === "above" ? "框上方" : "框内") : target.placement === "layout-top" ? (doc.type === 2 ? "页面顶部" : "排版上方") : target.placement === "layout-bottom" ? "排版下方" : "组件之间";
         }
+        if (doc.type === 3 && destination && !target.frame) showWidgetReflow(initialWidgets, destination.widgets);
+        else clearWidgetReflow();
       },
       (e, moved) => {
         preview.remove();
+        clearWidgetReflow();
         el.classList.remove("text-snap-pending");
         if (!moved || e.type === "pointercancel") {
           if (block) {

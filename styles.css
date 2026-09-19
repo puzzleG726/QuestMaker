@@ -98,7 +98,6 @@
 .text-snap-object,.text-snap-destination{position:absolute;box-sizing:border-box;pointer-events:none}
 .text-snap-object{outline:2px dashed #a989c6;outline-offset:4px}
 .text-snap-destination{border:2px solid #9475b1;background:#bfa7d31a}
-.text-snap-destination>span{position:absolute;left:0;bottom:calc(100% + 5px);padding:2px 6px;border-radius:3px;background:#78638f;color:white;font-size:12px;line-height:18px;white-space:nowrap}
 .text-snap-pending{opacity:.3}
 .text-snap-target-muted{opacity:.35}
 .text-snap-pending .rich{outline:none!important}
@@ -181,6 +180,12 @@
 .compat-widgets [data-drag-block]{touch-action:none;cursor:grab}
 .compat-widgets .choice[aria-checked=true]{background:var(--knob)}
 .widget-dragging{opacity:.45}
+.compat-block.widget-dragging{z-index:13;pointer-events:none;outline:2px solid #9475b1}
+.widget-dragging .rich{outline:none!important}
+.widget-reflow{transition:translate 140ms ease;pointer-events:none}
+.widget-insertion-preview{position:absolute;border:2px solid #9475b1;background:#bfa7d31a;pointer-events:none;z-index:12}
+.render-copy .widget-insertion-preview{display:none!important}
+@media(prefers-reduced-motion:reduce){.widget-reflow{transition:none}}
 .compat-image{position:relative;max-width:100%;min-width:0}
 .compat-image .image-box{height:var(--frame-height,auto)}
 .frame-resize{position:absolute;right:-5px;bottom:-5px;width:24px;height:24px;min-height:0;padding:3px;border-radius:4px;color:var(--accent);background:white;z-index:6;cursor:nwse-resize;touch-action:none;opacity:0}

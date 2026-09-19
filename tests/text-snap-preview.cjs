@@ -16,7 +16,7 @@ const { chromium } = require(path.join(process.env.HOME, '.cache/codex-runtimes/
     await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2); await page.mouse.down();
     await page.mouse.move(point.x, point.y, { steps: 8 });
     const preview = page.locator('#sheet .text-snap-preview:not([hidden])');
-    assert.equal(await preview.locator('span').innerText(), label);
+    assert.equal(await preview.innerText(), '', 'Snap preview has no text prompts');
     assert.equal(await preview.locator('.text-snap-object').evaluate(el => getComputedStyle(el).outlineStyle), 'dashed');
     assert.equal(await preview.locator('.text-snap-destination').evaluate(el => getComputedStyle(el).borderTopStyle), 'solid');
     const predicted = await preview.locator('.text-snap-destination').evaluate(rect);
