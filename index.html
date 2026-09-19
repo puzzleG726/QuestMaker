@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="./styles.css">
   <script defer src="./vendor/lucide.min.js"></script>
   <script defer src="./vendor/html2canvas.min.js"></script>
+  <script defer src="./export-delivery.js"></script>
   <script defer src="./app.js"></script>
 </head>
 <body>
@@ -69,7 +70,18 @@
     <form method="dialog"><div class="dialog-heading"><h2>导出图片</h2><button class="icon-button" aria-label="关闭"><i data-lucide="x"></i></button></div></form>
     <label class="field">图片格式<select id="exportFormat"><option value="png">PNG</option><option value="jpeg">JPG</option><option value="webp">WebP</option></select></label>
     <label class="field">清晰度<select id="exportScale"><option value="2">高清 · 2 倍</option><option value="1">标准 · 1 倍</option><option value="3">超清 · 3 倍</option></select></label>
-    <p id="exportDimensions" class="secondary"></p><button id="downloadButton" class="primary full"><i data-lucide="download"></i>下载图片</button>
+    <p id="exportDimensions" class="secondary"></p><button id="downloadButton" class="primary full"><i data-lucide="image"></i>生成预览</button>
+  </dialog>
+  <dialog id="exportPreview" aria-labelledby="exportPreviewTitle">
+    <h2 id="exportPreviewTitle">导出预览</h2>
+    <div class="export-preview-image"><img id="exportPreviewImage" alt="已生成的问卷图片"></div>
+    <p class="export-preview-hint">长按图片保存至手机相册</p>
+    <p id="exportPreviewStatus" class="export-preview-hint" role="status" aria-live="polite" hidden></p>
+    <div class="export-preview-actions">
+      <button id="saveExport" class="primary"><i data-lucide="download"></i>保存图片</button>
+      <button id="shareExport"><i data-lucide="share-2"></i>分享图片</button>
+      <button id="closeExportPreview"><i data-lucide="x"></i>关闭</button>
+    </div>
   </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>

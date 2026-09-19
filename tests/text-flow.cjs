@@ -19,14 +19,24 @@ const sharp = require(path.join(modules, 'sharp'));
     await page.locator(`[data-open="${mode}"]`).click(); await settle();
   };
   const number = async (selector, value) => {
-    await page.locator(selector).fill(String(value)); await page.locator(selector).dispatchEvent('change'); await settle();
+    if(await page.locator(selector).getAttribute('type')==='range') await page.locator(selector).evaluate((el,v)=>{el.value=v;el.dispatchEvent(new Event('input',{bubbles:true}));},String(value)); else await page.locator(selector).fill(String(value)); await page.locator(selector).dispatchEvent('change'); await settle();
   };
   const drag = async (handle, x, y, cancel = false) => {
     const r = await handle.boundingBox();
     await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2); await page.mouse.down();
     await page.mouse.move(x, y, { steps: 12 });
+    const predicted = await page.locator('#sheet .text-snap-preview:not([hidden]) .text-snap-destination').evaluateAll(nodes => nodes.map(el => ({ x: parseFloat(el.style.left), y: parseFloat(el.style.top), width: parseFloat(el.style.width), height: parseFloat(el.style.height) })));
     if (cancel) await page.locator('#sheet').dispatchEvent('pointercancel', { pointerId: 1 });
     await page.mouse.up(); await settle();
+    if (predicted.length && !cancel) {
+      const actual = await page.locator('#sheet .rich.selected').evaluate(el => {
+        const sheet = el.closest('.sheet'), root = sheet.getBoundingClientRect(), scale = root.width / sheet.offsetWidth;
+        const r = (el.closest('[data-text-box],[data-component]') || el).getBoundingClientRect();
+        return { x: (r.x - root.x) / scale, y: (r.y - root.y) / scale, width: r.width / scale, height: r.height / scale };
+      });
+      for (const field of ['x', 'y', 'width', 'height']) assert(Math.abs(actual[field] - predicted[0][field]) < 1, `Preview ${field} matches drop: ${JSON.stringify({ actual, predicted: predicted[0] })}`);
+    }
+    assert.equal(await page.locator('#sheet .text-snap-preview').count(), 0, 'Preview cleans up after drop/cancel');
   };
   const size = () => page.locator('#sheet').evaluate(el => [el.offsetWidth, el.offsetHeight]);
   try {
@@ -61,14 +71,26 @@ const sharp = require(path.join(modules, 'sharp'));
       assert.equal(await text(key).evaluate(el => el.parentElement.offsetWidth), await body.evaluate(el => el.offsetWidth));
       await page.locator('#textPlacement').selectOption('free'); await settle();
       b = await body.boundingBox();
-      await drag(page.locator(`#sheet [data-drag-text="${key}"]`), b.x + b.width / 2, b.y + 2);
+      const topY = mode === 2 ? await page.locator('#sheet').evaluate(el => el.getBoundingClientRect().top + 25.6 * el.getBoundingClientRect().width / el.offsetWidth) : b.y;
+      await drag(page.locator(`#sheet [data-drag-text="${key}"]`), b.x + b.width / 2, topY + 2);
       assert.equal(await page.locator('#sheet .layout-top .rich').count(), 1, 'Drag into top full-row zone');
-      await page.locator('#textPlacement').selectOption('layout-bottom');
+      b = await body.boundingBox();
+      await drag(page.locator(`#sheet [data-drag-text="${key}"]`), b.x + b.width / 2, b.y + b.height - 2);
+      assert.equal(await page.locator('#sheet .layout-bottom .rich').count(), 1, 'Drag into bottom full-row zone');
+      const imageFrame = page.locator('#sheet [data-frame]').first();
+      const imageBounds = await imageFrame.boundingBox();
+      await drag(page.locator(`#sheet [data-drag-text="${key}"]`), imageBounds.x + imageBounds.width / 2, imageBounds.y + imageBounds.height / 2);
+      assert.equal(await imageFrame.locator(`[data-text="${key}"]`).count(), 1, 'Image-frame inside snap is retained');
+      await page.locator('#textPlacement').selectOption('free'); await settle();
+      const freeStyle = await text(key).locator('..').getAttribute('style');
+      b = await body.boundingBox();
+      await drag(page.locator(`#sheet [data-drag-text="${key}"]`), b.x + b.width / 2, b.y + 2, true);
+      assert.equal(await text(key).locator('..').getAttribute('style'), freeStyle, 'Cancelled snap restores original free position');
       await page.locator('#removeText').click();
     }
 
     await page.reload(); await open(3);
-    assert.equal(await page.locator('#componentType option[value="text"]').count(), 0);
+    assert.equal(await page.locator('[data-add-component="text"]').count(), 0);
     const frame = key => page.locator(`#sheet [data-image="${key}"]`);
     const resize = async (key, delta, cancel = false) => {
       await frame(key).click(); const grip = page.locator(`#sheet [data-resize-frame="${key}"]`);
@@ -132,7 +154,7 @@ const sharp = require(path.join(modules, 'sharp'));
       await page.locator('#zoomFit').click(); await settle();
       if (width === 320) await page.screenshot({ path: path.join(out, 'mobile-fit.png'), fullPage: true });
     }
-    await page.locator('#exportButton').click(); const pending = page.waitForEvent('download'); await page.locator('#downloadButton').click();
+    await page.locator('#exportButton').click(); const pending = page.waitForEvent('download'); await page.locator('#downloadButton').click(); await page.locator('#saveExport').click(); await page.locator('#closeExportPreview').click();
     const file = await pending, filename = path.join(out, 'relation-export.png'); await file.saveAs(filename);
     const meta = await sharp(filename).metadata(); assert.equal(meta.width, exportSize[0] * 2); assert.equal(meta.height, exportSize[1] * 2);
     const stats = await sharp(filename).stats(); assert(stats.channels[0].stdev > 5, 'Nonblank exported canvas');

@@ -27,7 +27,15 @@
 
 ## GitHub Pages
 
-发布由 `.github/workflows/pages.yml` 管理：推送到 `main` 后扫描凭据，选取 `index.html`、`styles.css`、`app.js`、`LICENSE` 和指定的 `vendor/` 文件，交由 GitHub Pages 发布。测试、截图、个人文件和本地配置不会加入网站发布包。所有资源使用相对路径，也适用于仓库子路径。
+发布由 `.github/workflows/pages.yml` 管理：推送到 `main` 后扫描凭据，选取 `index.html`、`styles.css`、`app.js`、`export-delivery.js`、`LICENSE` 和指定的 `vendor/` 文件，交由 GitHub Pages 发布。测试、截图、个人文件和本地配置不会加入网站发布包。所有资源使用相对路径，也适用于仓库子路径。
+
+## 图片交付
+
+生成图片后只打开导出预览，不自动下载或分享。预览使用真实 `<img>`，显示完整生成结果；手机使用内嵌图片地址，保留长按保存。电脑和手机点击“保存图片”均下载至文件，不打开系统分享。预览按钮上方显示“长按图片保存至手机相册”，将存文件与存相册明确区分。点击“分享图片”才调用系统文件分享；不支持时隐藏分享按钮，仍保留预览与文件保存。错误提示显示在预览弹窗内，取消或分享失败不会自动下载或关闭预览。图片只生成一次，保存与分享复用同一结果；图片内容、尺寸及 PNG／JPG／WebP 格式保持原样。网页不能直接写入系统相册。
+
+`export-delivery.js` 提供 `QuestMakerExport.create(blob, filename)`，创建一次可复用的结果：`url` 用于预览、`file` 用于分享，PNG 保留 `image/png` 类型。`canShare()` 检测支持情况；`save()` 与 `share()` 必须分别由用户点击触发，分享不再回退为下载。关闭预览时移除图片地址并调用 `dispose()` 释放预览 URL。未来 Fill result 可复用同一接口；问卷模板链接分享尚未实现。
+
+`node tests/export-delivery.cjs` 验证交付行为，使用模拟分享 API，不会实际向外分享文件。真实相册保存仍需在手机系统分享面板中验证。
 
 代码仓库：https://github.com/puzzleG726/QuestMaker
 

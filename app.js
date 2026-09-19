@@ -28,7 +28,7 @@
     boxRatio: "1",
     rowHeights: Array(12).fill(135),
     fills: {},
-    nodeCount: 8,
+    ...(type !== 2 ? { nodeCount: 8 } : {}),
     legends: [
       { name: "喜欢", color: "#e67f85" },
       { name: "朋友", color: "#89b9c7" },
@@ -68,6 +68,12 @@
     ],
   }));
   documents.forEach((doc) => {
+    if (doc.type === 2) {
+      doc.participants = [];
+      doc.nextParticipantId = 0;
+      for (let i = 0; i < 8; i++) doc.participants.push(createParticipant(doc, i));
+      bindParticipants(doc);
+    }
     Object.assign(doc, {
       paperWidth: 720,
       rankWidths: [90, 529],
@@ -139,6 +145,7 @@
     linkMode = false,
     linkStart = null,
     imageTarget = null;
+  let relationImportVersion = 0;
   let history = [],
     historyIndex = -1,
     historyTimer,
@@ -146,6 +153,7 @@
     scaleFrame;
   const viewZoom = [1, 1, 1, 1];
   let cropState = null;
+  let closeLinePopovers = () => {};
   const sheet = $("#sheet");
   const uid = () =>
     "item-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -164,6 +172,57 @@
   const icon = (n) => '<i data-lucide="' + n + '" aria-hidden="true"></i>';
   const clamp = (n, min, max) => Math.max(min, Math.min(max, Number(n) || min));
   const current = () => documents[active];
+  function createParticipant(doc, index) {
+    const initialName = "角色 " + (index + 1);
+    return { id: doc.nextParticipantId++, image: {}, name: { html: initialName }, initialName };
+  }
+  function bindParticipants(doc) {
+    if (doc.type !== 2) return;
+    // Keep the existing image/text editors as views onto participant-owned data.
+    Object.defineProperty(doc, "nodeCount", {
+      configurable: true,
+      get: () => doc.participants.length,
+    });
+    for (const [map, prefix, property] of [
+      [doc.images, "node-", "image"],
+      [doc.texts, "node-name-", "name"],
+    ]) {
+      Object.getOwnPropertyNames(map).filter((key) => key.startsWith(prefix)).forEach((key) => delete map[key]);
+      doc.participants.forEach((participant) => Object.defineProperty(map, prefix + participant.id, {
+        configurable: true,
+        get: () => participant[property],
+        set: (value) => { participant[property] = value; },
+      }));
+    }
+  }
+  function participantIsEmpty(doc, participant) {
+    const key = "node-" + participant.id;
+    return !participant.image.src &&
+      participant.name.html === participant.initialName &&
+      Object.entries(participant.name).every(([key, value]) => key === "html" || value == null || value === "") &&
+      !doc.fills[key] &&
+      !Object.values(doc.textBoxes).some((box) => box.frame === key) &&
+      !doc.edges.some((edge) => edge.from === participant.id || edge.to === participant.id);
+  }
+  function resizeParticipants(doc, count) {
+    if (count < doc.participants.length) {
+      const removeCount = doc.participants.length - count;
+      const emptyIds = new Set();
+      for (let index = doc.participants.length - 1; index >= 0 && emptyIds.size < removeCount; index--) {
+        const participant = doc.participants[index];
+        if (participantIsEmpty(doc, participant)) emptyIds.add(participant.id);
+      }
+      if (emptyIds.size < removeCount) {
+        notify("空槽不足，无法减少到 " + count + " 人；已有图片、文字或连线的角色会保留");
+        return false;
+      }
+      doc.participants = doc.participants.filter((participant) => !emptyIds.has(participant.id));
+    }
+    while (doc.participants.length < count)
+      doc.participants.push(createParticipant(doc, doc.participants.length));
+    bindParticipants(doc);
+    return true;
+  }
   function icons() {
     if (typeof window.lucide?.createIcons === "function")
       window.lucide.createIcons();
@@ -487,10 +546,10 @@
   function edgeGeometry(doc, edge) {
     const a =
         edge.from != null
-          ? nodePosition(edge.from, doc.nodeCount)
+          ? nodePosition(doc.participants.findIndex((p) => p.id === edge.from), doc.nodeCount)
           : edge.startPoint,
       b =
-        edge.to != null ? nodePosition(edge.to, doc.nodeCount) : edge.endPoint;
+        edge.to != null ? nodePosition(doc.participants.findIndex((p) => p.id === edge.to), doc.nodeCount) : edge.endPoint;
     const dx = b.x - a.x,
       dy = b.y - a.y,
       length = Math.max(1, Math.hypot(dx, dy)),
@@ -594,15 +653,11 @@
       '"/>'
     );
   }
-  function relationHTML(doc) {
-    let edges = "",
-      labels = "";
-    doc.edges.forEach((edge, i) => {
-      if (edge.from >= doc.nodeCount || edge.to >= doc.nodeCount) return;
+  function relationEdgeHTML(doc, edge, i) {
       const g = edgeGeometry(doc, edge),
         color = edgeColor(doc, edge),
         width = edge.width || 3;
-      edges +=
+      return (
         '<g class="relation-edge" data-edge="' +
         i +
         '"><path class="edge-halo" d="' +
@@ -628,7 +683,6 @@
         endpointHTML(edge.endStyle || "arrow", g.e, g.endAngle, color, width) +
         [
           ["start", g.s],
-          ["center", g.label],
           ["end", g.e],
         ]
           .map(
@@ -642,7 +696,30 @@
               '" r="7" data-html2canvas-ignore/>',
           )
           .join("") +
-        "</g>";
+        "</g>"
+      );
+  }
+  function refreshSelectedLine(doc, edge, index) {
+    const element = $('[data-edge="' + index + '"]', sheet);
+    if (!element) return;
+    element.outerHTML = relationEdgeHTML(doc, edge, index);
+    const replacement = $('[data-edge="' + index + '"]', sheet);
+    replacement.classList.add("selected");
+    if (selected?.type === "edge") selected.element = replacement;
+    const label = $('[data-edge-label="' + index + '"]', sheet);
+    if (label) {
+      const geometry = edgeGeometry(doc, edge);
+      label.style.left = geometry.label.x + "px";
+      label.style.top = geometry.label.y + "px";
+    }
+  }
+  function relationHTML(doc) {
+    let edges = "",
+      labels = "";
+    doc.edges.forEach((edge, i) => {
+      if ([edge.from, edge.to].some((id) => id != null && !doc.participants.some((p) => p.id === id))) return;
+      const g = edgeGeometry(doc, edge), color = edgeColor(doc, edge);
+      edges += relationEdgeHTML(doc, edge, i);
       if (edge.textKey)
         labels +=
           '<div class="edge-text" data-edge-label="' +
@@ -670,19 +747,20 @@
       '" role="img" aria-label="角色关系连线">' +
       edges +
       "</svg>" +
-      Array.from({ length: doc.nodeCount }, (_, i) => {
+      doc.participants.map((participant, i) => {
         const p = nodePosition(i, doc.nodeCount);
         return (
           '<section class="relation-node" data-node="' +
-          i +
+          participant.id +
+          '" data-participant-id="' + participant.id +
           '" style="left:' +
           p.x +
           "px;top:" +
           p.y +
           'px">' +
-          imageBox(doc, "node-" + i) +
+          imageBox(doc, "node-" + participant.id) +
           (doc.showLabels
-            ? rich(doc, "node-name-" + i, "角色 " + (i + 1), "node-name")
+            ? rich(doc, "node-name-" + participant.id, participant.initialName, "node-name")
             : "") +
           "</section>"
         );
@@ -1032,8 +1110,11 @@
     legend.style.transformOrigin = "top left";
     const legendWidth = legend.offsetWidth * legendScale,
       legendHeight = legend.offsetHeight * legendScale;
+    const topFlow = $(".layout-top", target),
+      bottomFlow = $(".layout-bottom", target);
+    Object.assign(topFlow.style, { left: "24px", top: "25.6px", width: paper - 48 + "px" });
     const cornerWidth = Math.min(320, Math.floor(paper * 0.35)),
-      top = 25.6,
+      top = 25.6 + (topFlow.children.length ? topFlow.offsetHeight + 16 : 0),
       gap = 4;
     if (title)
       Object.assign(title.style, {
@@ -1091,23 +1172,10 @@
       for (const node of nodes)
         if (overlapsX(node, legendLeft, legendWidth))
           mapTop = Math.max(mapTop, top + legendHeight + gap - node.top);
-    const topFlow = $(".layout-top", target),
-      bottomFlow = $(".layout-bottom", target);
     if (topFlow.children.length) {
-      const y =
-        Math.max(
-          top,
-          ...headers.map((h) => h.bottom),
-          bottomLegend ? 0 : top + legendHeight,
-        ) + 16;
-      Object.assign(topFlow.style, {
-        left: "24px",
-        top: y + "px",
-        width: paper - 48 + "px",
-      });
       mapTop = Math.max(
         mapTop,
-        y + topFlow.offsetHeight + 16 - Math.min(...nodes.map((n) => n.top)),
+        top - Math.min(...nodes.map((n) => n.top)),
       );
     }
     map.style.top = Math.ceil(mapTop) + "px";
@@ -1286,8 +1354,7 @@
     active = type;
     selected = null;
     savedRange = null;
-    linkMode = false;
-    linkStart = null;
+    setLinkMode(false);
     $("#textStyle").value = "body";
     $("#textColor").value = current().foreground;
     $("#homeView").hidden = true;
@@ -1296,7 +1363,6 @@
     $("#breadcrumb").textContent = "/ " + names[type];
     $("#paperName").textContent = names[type];
     $("#linkMode").hidden = type !== 2;
-    $("#linkMode").classList.remove("active");
     history = [];
     historyIndex = -1;
     render();
@@ -1312,6 +1378,30 @@
   }
   const field = (label, body) =>
     '<label class="field">' + label + body + "</label>";
+  function visualOptionGroup(id, label, value, options) {
+    return '<div class="field visual-option-field"><span>' + label +
+      '</span><div id="' + id + '" class="visual-option-group" role="group" aria-label="' + label + '">' +
+      options.map((option) => '<button type="button" data-option="' + escapeHTML(option.value) +
+        '" aria-label="' + escapeHTML(option.label) + '" data-tooltip="' + escapeHTML(option.label) +
+        '" aria-pressed="' + (option.value === value) + '">' + option.icon +
+        (option.showLabel ? '<span class="option-label">' + escapeHTML(option.label) + '</span>' : '') + '</button>').join('') + '</div></div>';
+  }
+  function bindVisualOptions(id, onChange) {
+    const group = $("#" + id);
+    if (!group) return;
+    group.onclick = (event) => {
+      const button = event.target.closest("button[data-option]");
+      if (!button || !group.contains(button)) return;
+      $$("button", group).forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
+      onChange(button.dataset.option);
+    };
+  }
+  const shapeOption = (value, label, filled = false) => ({
+    value, label,
+    icon: value === "" || value === "default" ? icon("rotate-ccw") :
+      value === "heart" ? '<span class="option-heart" aria-hidden="true">' + icon("heart") + '</span>' :
+      '<span class="option-shape shape-' + value + (filled ? ' filled' : '') + '" aria-hidden="true"></span>',
+  });
   const numberField = (id, value, min, max) =>
     '<input type="number" id="' +
     id +
@@ -1322,20 +1412,37 @@
     '" max="' +
     max +
     '">';
+  function discreteSliderField(id, label, value, min, max) {
+    const progress = ((value - min) / (max - min)) * 100,
+      interval = max - min <= 6 ? 1 : Math.ceil((max - min) / 7),
+      ticks = [];
+    for (let tick = min + interval; tick < max; tick += interval)
+      ticks.push('<span style="left:' + ((tick - min) / (max - min)) * 100 + '%"></span>');
+    return '<div class="field discrete-slider-field"><label for="' + id + '">' + label +
+      '</label><div class="discrete-control" style="--progress:' + progress + '%">' +
+      '<div class="discrete-scale"><output for="' + id + '">' + value + '</output>' +
+      '<div class="discrete-rail" aria-hidden="true">' + ticks.join('') + '</div>' +
+      '<span class="discrete-min" aria-hidden="true">' + min + '</span>' +
+      '<span class="discrete-max" aria-hidden="true">' + max + '</span></div>' +
+      '<input id="' + id + '" type="range" min="' + min + '" max="' + max +
+      '" step="1" value="' + value + '"></div></div>';
+  }
+  function updateDiscreteSlider(input) {
+    const control = input.closest(".discrete-control");
+    if (!control) return;
+    const value = Math.round(clamp(input.value, Number(input.min), Number(input.max)));
+    input.value = value;
+    control.style.setProperty("--progress", ((value - input.min) / (input.max - input.min)) * 100 + "%");
+    $("output", control).value = value;
+  }
   function renderProperties() {
     const doc = current();
     let layout = "";
     if (doc.type === 0 || doc.type === 1)
       layout =
-        '<div class="field-row">' +
-        field(
-          "行数",
-          numberField("rows", doc.rows, 1, doc.type === 0 ? 12 : 6),
-        ) +
-        field(
-          "列数",
-          numberField("cols", doc.cols, 1, doc.type === 0 ? 4 : 5),
-        ) +
+        '<div class="field-row discrete-counts">' +
+        discreteSliderField("rows", "行数", doc.rows, 1, doc.type === 0 ? 12 : 6) +
+        discreteSliderField("cols", "列数", doc.cols, 1, doc.type === 0 ? 4 : 5) +
         "</div>";
     if (doc.type === 0)
       layout +=
@@ -1366,14 +1473,15 @@
       );
     if (doc.type === 2)
       layout +=
-        field("头像数量", numberField("nodeCount", doc.nodeCount, 3, 24)) +
+        '<button id="batchAvatars">' + icon("images") + '批量导入头像</button>' +
+        discreteSliderField("nodeCount", "头像数量", doc.nodeCount, 3, 24) +
         '<label class="toggle-field"><input id="showLabels" type="checkbox" ' +
         (doc.showLabels ? "checked" : "") +
         ">显示角色名称</label>" +
-        field(
-          "图例位置",
-          '<select id="legendPosition"><option value="top-right">右上角</option><option value="bottom-left">左下角</option></select>',
-        );
+        visualOptionGroup("legendPosition", "图例位置", doc.legendPosition, [
+          { value: "bottom-left", label: "左下角", icon: '<span class="option-canvas bottom-left" aria-hidden="true"></span>' },
+          { value: "top-right", label: "右上角", icon: '<span class="option-canvas top-right" aria-hidden="true"></span>' },
+        ]);
     if (doc.type === 3)
       layout +=
         field(
@@ -1392,14 +1500,17 @@
               '">',
           ),
         ).join("") +
-        '</div><div class="component-adder">' +
-        field(
-          "添加组件",
-          '<select id="componentType"><option value="scale">滑动量表</option><option value="checks">勾选选项</option><option value="legend">颜色图例</option><option value="box">备注框</option><option value="image">图片框</option></select>',
-        ) +
-        '<button id="addComponent" aria-label="添加组件">' +
-        icon("plus") +
-        "添加</button></div>";
+        '</div><div class="field"><span>添加组件</span><div class="component-palette" role="group" aria-label="添加组件">' +
+        [
+          ["scale", "sliders-horizontal", "滑动量表"],
+          ["checks", "list-checks", "勾选选项"],
+          ["legend", "palette", "颜色图例"],
+          ["box", "notebook-pen", "备注框"],
+          ["image", "image", "图片框"],
+          ["quadrant", "axis-3d", "四维图"],
+        ].map(([type, name, label]) => '<button type="button" data-add-component="' + type +
+          '" aria-label="添加' + label + '">' + icon(name) + '<span>' + label + '</span></button>').join('') +
+        '</div></div>';
     $("#layoutProperties").innerHTML =
       '<section class="property-section"><h3>' +
       names[doc.type] +
@@ -1420,6 +1531,7 @@
       const el = $("#" + key);
       if (!el) return;
       el.value = doc[key];
+      if (el.type === "range") el.oninput = () => updateDiscreteSlider(el);
       el.onchange = () => {
         const next = Math.round(
           clamp(
@@ -1439,17 +1551,34 @@
           ),
         );
         el.value = next;
+        updateDiscreteSlider(el);
         if (doc[key] === next) return;
+        const retainSliderFocus = el.type === "range" && document.activeElement === el;
         flushHistory();
-        doc[key] = next;
+        if (key === "nodeCount") {
+          if (!resizeParticipants(doc, next)) {
+            el.value = doc.nodeCount;
+            updateDiscreteSlider(el);
+            return;
+          }
+          setLinkMode(false);
+        } else doc[key] = next;
         if (doc.type === 0) fitRankPictures(doc);
         selected = null;
         refreshSheet();
         renderProperties();
         renderSelection();
+        if (retainSliderFocus) $("#" + key).focus({ preventScroll: true });
         recordHistory();
       };
     });
+    const batchAvatars = $("#batchAvatars");
+    if (batchAvatars) batchAvatars.onclick = () => {
+      imageTarget = { type: 2, batch: true };
+      $("#imageUpload").multiple = true;
+      $("#imageUpload").value = "";
+      $("#imageUpload").click();
+    };
     const br = $("#boxRatio");
     if (br) {
       br.value = doc.boxRatio;
@@ -1493,15 +1622,11 @@
           scheduleHistory();
         }),
     );
-    const lp = $("#legendPosition");
-    if (lp) {
-      lp.value = doc.legendPosition;
-      lp.onchange = () => {
-        doc.legendPosition = lp.value;
+    bindVisualOptions("legendPosition", (value) => {
+        doc.legendPosition = value;
         refreshSheet();
         recordHistory();
-      };
-    }
+    });
     ["Width", "Height"].forEach((dimension) => {
       const el = $("#rank" + dimension);
       if (el)
@@ -1512,14 +1637,9 @@
           recordHistory();
         };
     });
-    const add = $("#addComponent");
-    if (add) {
-      $("#componentType").insertAdjacentHTML(
-        "beforeend",
-        '<option value="quadrant">四维图</option>',
-      );
-      add.onclick = () => addCompatComponent($("#componentType").value);
-    }
+    $$("[data-add-component]").forEach((button) => {
+      button.onclick = () => addCompatComponent(button.dataset.addComponent);
+    });
   }
   function legendPanel(doc) {
     if (doc.type !== 2 && doc.type !== 3) return "";
@@ -1723,6 +1843,9 @@
     fitRankPictures(doc);
   }
   function highlightSelection() {
+    $$(".relation-node", sheet).forEach((node) =>
+      node.classList.toggle("link-start", linkMode && node.querySelector('[data-image="node-' + linkStart + '"]') !== null),
+    );
     $$(".selected", sheet).forEach((el) => el.classList.remove("selected"));
     $$("[data-image]", sheet).forEach((el) =>
       el.setAttribute("aria-pressed", "false"),
@@ -1752,6 +1875,7 @@
     if (selected?.type === "edge")
       selected.element = $('[data-edge="' + selected.index + '"]', sheet);
     highlightSelection();
+    syncLineColorButton();
     icons();
     fitSheet();
   }
@@ -1828,10 +1952,11 @@
             (doc.fills[key] || "#ffffff") +
             '">',
         ) +
-        field(
-          "图片框形状",
-          '<select id="imageShape"><option value="">默认</option><option value="square">方形</option><option value="circle">圆形</option><option value="rectangle">长方形</option><option value="rounded">圆角</option></select>',
-        ) +
+        visualOptionGroup("imageShape", "图片框形状", value.shape || "", [
+          shapeOption("", "默认"), shapeOption("square", "方形"),
+          shapeOption("circle", "圆形"), shapeOption("rectangle", "长方形"),
+          shapeOption("rounded", "圆角"),
+        ]) +
         field(
           "图片适配",
           '<select id="imageFit"><option value="cover">填满</option><option value="contain">完整显示</option></select>',
@@ -1845,20 +1970,18 @@
           ? '<button id="removeFrameText">' + icon("x") + "移除文字</button>"
           : "") +
         "</div></section>";
-      $("#imageShape").value = value.shape || "";
       $("#imageFit").value = value.fit || "cover";
-      ["Shape", "Fit"].forEach(
-        (prop) =>
-          ($("#image" + prop).onchange = (e) => {
+      const changeImageOption = (prop, value) => {
             doc.images[key] = {
               ...doc.images[key],
-              [prop.toLowerCase()]: e.target.value,
+              [prop]: value,
             };
             refreshSheet();
             renderSelection();
             recordHistory();
-          }),
-      );
+      };
+      bindVisualOptions("imageShape", (value) => changeImageOption("shape", value));
+      $("#imageFit").onchange = (e) => changeImageOption("fit", e.target.value);
       $("#replaceImage").onclick = () => chooseImage(key);
       addCropButton(
         $(".frame-actions", host),
@@ -1934,10 +2057,12 @@
   }
   function placeText(key, placement) {
     const doc = current(),
-      block = textComponent(doc, key),
-      box = doc.textBoxes[key],
       element = $('[data-text="' + key + '"]', sheet),
       bounds = paperRect(element.closest("[data-text-box]") || element);
+    applyTextPlacement(doc, key, placement, bounds);
+  }
+  function applyTextPlacement(doc, key, placement, bounds) {
+    const block = textComponent(doc, key), box = doc.textBoxes[key];
     if (placement === "inside" || placement === "above") {
       if (box?.frame) box.placement = placement;
       return;
@@ -2047,6 +2172,7 @@
         : -1;
   }
   function renderLineToolbar() {
+    closeLinePopovers();
     const host = $("#lineToolbar"),
       index = selectedEdgeIndex(),
       edge = current()?.edges[index];
@@ -2054,62 +2180,94 @@
     host.innerHTML = "";
     if (!edge) return;
     const doc = current(),
-      ends =
-        '<option value="none">无</option><option value="arrow">箭头</option><option value="circle">圆点</option><option value="bar">短线</option>';
+      geometry = edgeGeometry(doc, edge),
+      dx = geometry.b.x - geometry.a.x,
+      dy = geometry.b.y - geometry.a.y,
+      bend = edge.control
+        ? (-dy * edge.control.x + dx * edge.control.y) / Math.max(1, Math.hypot(dx, dy))
+        : edge.bend || 0,
+      bendLimit = Math.max(300, Math.ceil(Math.abs(bend)));
     host.innerHTML =
       field(
         "颜色",
-        '<input id="edgeColor" type="color" value="' +
-          edgeColor(doc, edge) +
-          '">',
+        '<button id="edgeColor" class="icon-button"><span class="edge-color-swatch" aria-hidden="true"></span></button>',
       ) +
-      field(
-        "图例",
-        '<select id="edgeLegend"><option value="">自定义</option>' +
-          doc.legends
-            .map(
-              (l) =>
-                '<option value="' +
-                l.id +
-                '">' +
-                escapeHTML(l.name) +
-                "</option>",
-            )
-            .join("") +
-          "</select>",
-      ) +
-      field("起点", '<select id="edgeStart">' + ends + "</select>") +
-      field("终点", '<select id="edgeEnd">' + ends + "</select>") +
-      field("粗细", numberField("edgeWidth", edge.width || 3, 1, 12)) +
+      field("Start", '<button id="edgeStart" class="icon-button" aria-label="起点箭头" data-tooltip="起点箭头">' + icon("arrow-left") + '</button>') +
+      field("End", '<button id="edgeEnd" class="icon-button" aria-label="终点箭头" data-tooltip="终点箭头">' + icon("arrow-right") + '</button>') +
+      '<div class="field"><span>粗细</span><button id="edgeWidth" class="icon-button" aria-label="线条粗细" data-tooltip="线条粗细" aria-expanded="false" aria-controls="edgeWidthPopover">' +
+      icon("list-filter") +
+      '</button><div id="edgeWidthPopover" class="line-control-popover" popover="auto" role="group" aria-label="线条粗细">' +
+      [6, 9, 12].map((width, i) => '<button class="icon-button" data-edge-width="' + width + '" aria-label="' + ["细", "中", "粗"][i] + '" style="--weight:' + (2 + i * 2) + '">' + icon("minus") + '</button>').join("") +
+      '</div></div>' +
       '<button id="edgeText" aria-label="编辑线上文字" data-tooltip="线上文字">' +
       icon("type") +
-      '</button><button id="straightEdge" aria-label="恢复直线" data-tooltip="恢复直线">' +
-      icon("minus") +
-      '</button><button id="removeEdge" aria-label="删除连线" data-tooltip="删除连线">' +
+      '</button><div class="line-curve-control"><button id="edgeCurve" aria-label="连线曲率" data-tooltip="连线曲率" aria-expanded="false" aria-controls="edgeCurvePopover">' +
+      icon("spline") +
+      '</button><div id="edgeCurvePopover" class="line-control-popover" popover="auto"><input id="edgeBend" type="range" aria-label="连线曲率" min="-' + bendLimit + '" max="' + bendLimit + '" step="1" value="' + bend + '"></div></div>' +
+      '<button id="removeEdge" aria-label="删除连线" data-tooltip="删除连线">' +
       icon("trash-2") +
       "</button>";
-    $("#edgeLegend").value = edge.color ? "" : edge.legendId || "";
-    $("#edgeStart").value = edge.startStyle || "none";
-    $("#edgeEnd").value = edge.endStyle || "arrow";
+    syncLineColorButton();
+    $("#edgeColor").onclick = () => {
+      if (!doc.legends.length) return;
+      flushHistory();
+      const position = doc.legends.findIndex((legend) => legend.id === edge.legendId),
+        next = doc.legends[(position + 1) % doc.legends.length];
+      edge.legendId = next.id;
+      delete edge.color;
+      refreshSheet();
+      recordHistory();
+    };
     for (const [id, key] of [
       ["edgeStart", "startStyle"],
       ["edgeEnd", "endStyle"],
-      ["edgeWidth", "width"],
-      ["edgeColor", "color"],
-      ["edgeLegend", "legendId"],
-    ])
-      $("#" + id).oninput = (e) => {
-        edge[key] =
-          key === "width" ? clamp(e.target.value, 1, 12) : e.target.value;
-        if (key === "legendId") {
-          if (edge.legendId) delete edge.color;
-          else edge.color = $("#edgeColor").value;
-          $("#edgeColor").value = edgeColor(doc, edge);
-        }
-        if (key === "color") $("#edgeLegend").value = "";
-        refreshSheet();
-        scheduleHistory();
+    ]) {
+      const button = $("#" + id),
+        isArrow = () => (edge[key] || (key === "endStyle" ? "arrow" : "none")) === "arrow";
+      button.setAttribute("aria-pressed", String(isArrow()));
+      button.onpointerdown = (event) => {
+        event.stopPropagation();
+        if (event.isPrimary && event.button === 0)
+          button.setPointerCapture(event.pointerId);
       };
+      button.onpointerup = button.onpointercancel = (event) => {
+        event.stopPropagation();
+        if (button.hasPointerCapture(event.pointerId))
+          button.releasePointerCapture(event.pointerId);
+      };
+      button.onpointermove = (event) => event.stopPropagation();
+      button.onclick = (event) => {
+        event.stopPropagation();
+        // The surrounding field is a label; do not forward a second activation.
+        event.preventDefault();
+        flushHistory();
+        edge[key] = isArrow() ? "none" : "arrow";
+        button.setAttribute("aria-pressed", String(isArrow()));
+        refreshSelectedLine(doc, edge, index);
+        recordHistory();
+      };
+    }
+    const widthButton = $("#edgeWidth"),
+      popover = $("#edgeWidthPopover"),
+      updateWidth = () => {
+        const nearest = [6, 9, 12].reduce((a, b) => Math.abs(b - (edge.width || 3)) < Math.abs(a - (edge.width || 3)) ? b : a);
+        $$("[data-edge-width]", popover).forEach((button) => button.setAttribute("aria-pressed", String(Number(button.dataset.edgeWidth) === nearest)));
+      };
+    updateWidth();
+    const closeWidth = bindLinePopover(widthButton, popover),
+      closeCurve = bindLinePopover($("#edgeCurve"), $("#edgeCurvePopover"));
+    closeLinePopovers = () => { closeWidth(); closeCurve(); };
+    $$("[data-edge-width]", popover).forEach((button) => {
+      button.onclick = () => {
+        flushHistory();
+        edge.width = Number(button.dataset.edgeWidth);
+        updateWidth();
+        popover.hidePopover();
+        widthButton.focus();
+        refreshSheet();
+        recordHistory();
+      };
+    });
     $("#edgeText").onclick = () => {
       if (!edge.textKey || doc.texts[edge.textKey]?.hidden) {
         edge.textKey ??= uid();
@@ -2121,10 +2279,24 @@
       el.focus();
       setSelected({ type: "text", key: edge.textKey, element: el });
     };
-    $("#straightEdge").onclick = () => {
+    const bendSlider = $("#edgeBend");
+    bendSlider.onpointerdown = () => flushHistory();
+    bendSlider.oninput = () => {
+      const value = Number(bendSlider.value);
       delete edge.control;
-      edge.bend = 0;
-      refreshSheet();
+      edge.bend = Math.abs(value) <= 8 ? 0 : value;
+      bendSlider.value = edge.bend;
+      bendSlider.setAttribute("aria-valuetext", edge.bend === 0 ? "直线" : String(edge.bend));
+      refreshSelectedLine(doc, edge, index);
+    };
+    bendSlider.onchange = () => flushHistory();
+    bendSlider.onkeydown = (event) => {
+      if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+      event.preventDefault();
+      flushHistory();
+      const direction = ["ArrowRight", "ArrowUp"].includes(event.key) ? 1 : -1;
+      bendSlider.value = clamp(Number(bendSlider.value) + direction * 10, -bendLimit, bendLimit);
+      bendSlider.oninput();
       recordHistory();
     };
     $("#removeEdge").onclick = () => {
@@ -2136,6 +2308,65 @@
     };
     icons();
   }
+  function bindLinePopover(button, popover) {
+    let listeners;
+    const viewport = () => ({
+      left: visualViewport?.offsetLeft || 0,
+      top: visualViewport?.offsetTop || 0,
+      width: visualViewport?.width || innerWidth,
+      height: visualViewport?.height || innerHeight,
+    });
+    const close = () => {
+      listeners?.abort();
+      if (popover.matches(":popover-open")) popover.hidePopover();
+      button.setAttribute("aria-expanded", "false");
+    };
+    const position = () => {
+      if (!popover.matches(":popover-open")) return;
+      const view = viewport(), rect = button.getBoundingClientRect();
+      popover.style.maxWidth = Math.max(0, view.width - 16) + "px";
+      const width = popover.offsetWidth, height = popover.offsetHeight;
+      if (rect.top < view.top || rect.bottom + height + 14 > view.top + view.height) {
+        close();
+        return;
+      }
+      popover.style.left = Math.max(view.left + 8, Math.min(rect.left, view.left + view.width - width - 8)) + "px";
+      popover.style.top = rect.bottom + 6 + "px";
+    };
+    button.onclick = () => {
+      if (popover.matches(":popover-open")) return close();
+      popover.showPopover();
+      const view = viewport(), rect = button.getBoundingClientRect();
+      if (rect.top < view.top || rect.bottom + popover.offsetHeight + 14 > view.top + view.height)
+        button.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+      position();
+      if (!popover.matches(":popover-open")) return;
+      button.setAttribute("aria-expanded", "true");
+      listeners?.abort();
+      listeners = new AbortController();
+      const options = { signal: listeners.signal, passive: true };
+      window.addEventListener("resize", position, options);
+      document.addEventListener("scroll", position, { ...options, capture: true });
+      visualViewport?.addEventListener("resize", position, options);
+      visualViewport?.addEventListener("scroll", position, options);
+    };
+    popover.ontoggle = () => {
+      if (!popover.matches(":popover-open")) close();
+    };
+    return close;
+  }
+  function syncLineColorButton() {
+    const button = $("#edgeColor"),
+      doc = current(),
+      edge = doc?.edges[selectedEdgeIndex()];
+    if (!button || !edge) return;
+    const legend = doc.legends.find((item) => item.id === edge.legendId);
+    $(".edge-color-swatch", button).style.backgroundColor = edgeColor(doc, edge);
+    button.disabled = !doc.legends.length;
+    button.dataset.legendId = edge.legendId || "";
+    button.dataset.tooltip = legend && !edge.color ? legend.name : "切换颜色图例";
+    button.setAttribute("aria-label", "切换颜色图例" + (legend && !edge.color ? "：" + legend.name : ""));
+  }
   function renderKnobSelection(doc, host) {
     const key = selected.key,
       person = Number(key.split("-").at(-1)),
@@ -2146,10 +2377,10 @@
       length = Math.min(knob.length || 28, maximum);
     host.innerHTML =
       '<section class="property-section knob-properties"><h3>滑块</h3><div class="field-row">' +
-      field(
-        "形状",
-        '<select id="knobShape"><option value="default">默认</option><option value="circle">圆形</option><option value="heart">心形</option><option value="rectangle">长方形</option></select>',
-      ) +
+      visualOptionGroup("knobShape", "形状", knob.shape || "default", [
+        shapeOption("default", "默认"), shapeOption("circle", "圆形", true),
+        shapeOption("heart", "心形", true), shapeOption("rectangle", "长方形", true),
+      ]) +
       field(
         "颜色",
         '<div class="knob-color-controls"><input id="knobColor" type="color" value="' +
@@ -2172,7 +2403,12 @@
           )
         : "") +
       "</section>";
-    $("#knobShape").value = knob.shape || "default";
+    bindVisualOptions("knobShape", (value) => {
+      doc.knobs[key] = { ...doc.knobs[key], shape: value };
+      refreshSheet();
+      renderSelection();
+      scheduleHistory();
+    });
     host
       .querySelector("h3")
       .insertAdjacentHTML(
@@ -2188,7 +2424,6 @@
     };
     for (const [id, prop] of [
       ["knobColor", "color"],
-      ["knobShape", "shape"],
       ["knobLength", "length"],
     ]) {
       const input = $("#" + id);
@@ -2200,7 +2435,6 @@
               prop === "length" ? clamp(input.value, 10, maximum) : input.value,
           };
           refreshSheet();
-          if (prop === "shape") renderSelection();
           if (prop === "length")
             $("#knobLengthValue").textContent = doc.knobs[key].length + " px";
           scheduleHistory();
@@ -2219,7 +2453,7 @@
     const section = document.createElement("section");
     section.className = "property-section";
     section.innerHTML =
-      "<h3>组件</h3>" +
+      "<h3>组件位置</h3>" +
       field(
         "位置",
         '<select id="componentSlot"><option value="full">整行</option><option value="left">左列</option><option value="right">右列</option></select>',
@@ -2914,6 +3148,7 @@
         if (linkStart === null) {
           linkStart = node;
           image.closest(".relation-node").classList.add("link-start");
+          notify("请选择第二个头像");
         } else if (node !== linkStart) {
           doc.edges.push({
             from: linkStart,
@@ -2925,9 +3160,9 @@
             width: 3,
             bend: 0,
             startStyle: "none",
-            endStyle: "arrow",
+            endStyle: "none",
           });
-          linkStart = null;
+          setLinkMode(false);
           selected = { type: "edge", index: doc.edges.length - 1 };
           refreshSheet();
           renderSelection();
@@ -2946,15 +3181,28 @@
     const component = event.target.closest("[data-component]");
     if (component && !event.target.closest("[data-text]"))
       setSelected({ type: "component", id: component.dataset.component });
+    if (linkMode && !event.target.closest('[data-text], [data-component], button, input, select, [data-drag-text]'))
+      setLinkMode(false);
   });
-  $("#linkMode").onclick = () => {
-    linkMode = !linkMode;
+  function setLinkMode(enabled) {
+    linkMode = enabled;
     linkStart = null;
-    $("#linkMode").classList.toggle("active", linkMode);
-    $("#linkMode").setAttribute("aria-pressed", String(linkMode));
+    const button = $("#linkMode");
+    button.classList.toggle("active", linkMode);
+    button.setAttribute("aria-pressed", String(linkMode));
+    button.innerHTML = icon("move-up-right") + (linkMode ? "连线中" : "连线");
     $$(".link-start", sheet).forEach((e) => e.classList.remove("link-start"));
-    if (linkMode) notify("依次选择两个头像，建立连线");
-  };
+    if (!linkMode && $("#toast").textContent === "请选择第二个头像") {
+      clearTimeout(toastTimer);
+      $("#toast").hidden = true;
+    }
+    icons();
+  }
+  $("#linkMode").onclick = () => setLinkMode(!linkMode);
+  $("#canvasViewport").addEventListener("click", (event) => {
+    if (linkMode && (event.target === event.currentTarget || event.target === $("#sheetFrame")))
+      setLinkMode(false);
+  });
   function dragSession(event, move, finish) {
     event.preventDefault();
     const start = { x: event.clientX, y: event.clientY };
@@ -3012,7 +3260,7 @@
         });
         return;
       }
-      startEdgeDrag(event, edge);
+      if (event.target.closest("[data-edge-handle]")) startEdgeDrag(event, edge);
       return;
     }
     const resize = event.target.closest("[data-resize]"),
@@ -3293,21 +3541,15 @@
     });
   }
   function startEdgeDrag(event, element) {
+    const handle = event.target.closest("[data-edge-handle]")?.dataset.edgeHandle;
+    if (handle !== "start" && handle !== "end") return;
     const doc = current(),
       index = Number(element.dataset.edge),
       edge = doc.edges[index],
       before = structuredClone(edge),
-      g = edgeGeometry(doc, edge),
-      handle =
-        event.target.closest("[data-edge-handle]")?.dataset.edgeHandle ||
-        "line",
       map = $(".relation-map", sheet).getBoundingClientRect(),
       bounds = relationGeometry(doc.nodeCount),
-      scale = map.width / bounds.width,
-      start = {
-        x: (event.clientX - map.left) / scale,
-        y: (event.clientY - map.top) / scale,
-      };
+      scale = map.width / bounds.width;
     flushHistory();
     dragSession(
       event,
@@ -3322,16 +3564,11 @@
             Math.min(bounds.height, (e.clientY - map.top) / scale),
           ),
         };
-        if (handle === "center") {
-          edge.control = {
-            x: 2 * (p.x - (g.s.x + g.e.x) / 2),
-            y: 2 * (p.y - (g.s.y + g.e.y) / 2),
-          };
-        } else if (handle === "start" || handle === "end") {
+        if (handle === "start" || handle === "end") {
           const end = handle === "start" ? "from" : "to",
             other = handle === "start" ? "to" : "from",
-            nearest = Array.from({ length: doc.nodeCount }, (_, i) => ({
-              i,
+            nearest = doc.participants.map((participant, i) => ({
+              i: participant.id,
               p: nodePosition(i, doc.nodeCount),
             })).find(
               (node) =>
@@ -3341,23 +3578,6 @@
             );
           edge[end] = nearest ? nearest.i : null;
           edge[handle === "start" ? "startPoint" : "endPoint"] = p;
-        } else {
-          const dx = Math.max(
-              -Math.min(g.s.x, g.e.x),
-              Math.min(bounds.width - Math.max(g.s.x, g.e.x), p.x - start.x),
-            ),
-            dy = Math.max(
-              -Math.min(g.s.y, g.e.y),
-              Math.min(bounds.height - Math.max(g.s.y, g.e.y), p.y - start.y),
-            );
-          edge.from = null;
-          edge.to = null;
-          edge.startPoint = { x: g.s.x + dx, y: g.s.y + dy };
-          edge.endPoint = { x: g.e.x + dx, y: g.e.y + dy };
-          edge.control = {
-            x: g.c.x - (g.s.x + g.e.x) / 2,
-            y: g.c.y - (g.s.y + g.e.y) / 2,
-          };
         }
         refreshSheet();
       },
@@ -3368,6 +3588,34 @@
         recordHistory();
       },
     );
+  }
+  function measureTextDrop(source, key, destination, bounds) {
+    const doc = JSON.parse(JSON.stringify(source));
+    bindParticipants(doc);
+    if (destination.frame) {
+      const used = Object.keys(doc.textBoxes).filter(id => id !== key && doc.textBoxes[id].frame === destination.frame);
+      if (used.length >= 2) return null;
+      const block = textComponent(doc, key);
+      if (block) doc.blocks = doc.blocks.filter(item => item !== block);
+      doc.textBoxes[key] = { ...doc.textBoxes[key], ...destination };
+    } else applyTextPlacement(doc, key, destination.placement, bounds);
+    // Measure the same layout used on drop, once per destination during a drag.
+    const probe = document.createElement("div");
+    probe.className = "sheet text-snap-measure";
+    probe.setAttribute("aria-hidden", "true");
+    probe.inert = true;
+    document.body.append(probe);
+    try {
+      renderSheet(doc, probe);
+      const text = $('[data-text="' + key + '"]', probe);
+      const element = text.closest("[data-text-box],[data-component]") || text;
+      const root = probe.getBoundingClientRect(), rect = element.getBoundingClientRect();
+      const object = destination.frame ? $('[data-frame="' + destination.frame + '"]', probe).getBoundingClientRect() : null;
+      return { x: rect.left - root.left, y: rect.top - root.top, width: rect.width, height: rect.height,
+        object: object && { x: object.left - root.left, y: object.top - root.top, width: object.width, height: object.height } };
+    } finally {
+      probe.remove();
+    }
   }
   function startTextDrag(event, key) {
     const doc = current(),
@@ -3383,7 +3631,27 @@
       sy = event.clientY;
     flushHistory();
     const original = { ...box };
-    let target = null;
+    const previewDoc = JSON.parse(JSON.stringify(doc)), previewCache = new Map();
+    const preview = document.createElement("div");
+    preview.className = "text-snap-preview";
+    preview.dataset.html2canvasIgnore = "";
+    preview.setAttribute("aria-hidden", "true");
+    preview.innerHTML = '<div class="text-snap-object"></div><div class="text-snap-destination"><span></span></div>';
+    preview.hidden = true;
+    sheet.append(preview);
+    const body = $(".rank-body,.grid-body,.relation-map,.compat-body", sheet),
+      bounds = paperRect(body),
+      zones = [
+        { y: doc.type === 2 ? 25.6 : bounds.y, placement: "layout-top", element: body },
+        { y: bounds.y + bounds.height, placement: "layout-bottom", element: body },
+      ];
+    if (doc.type === 3)
+      $$("[data-component]", body).forEach((component) => {
+        if (component === el) return;
+        const b = paperRect(component);
+        zones.push({ y: b.y - 10, placement: "before:" + component.dataset.component, element: component });
+      });
+    let target = null, targetObject = null;
     dragSession(
       event,
       (e) => {
@@ -3424,6 +3692,7 @@
           width: box.width + "px",
         });
         target = null;
+        targetObject = null;
         const root = sheet.getBoundingClientRect(),
           pointer = {
             x: (e.clientX - root.left) / scale,
@@ -3431,8 +3700,8 @@
           },
           cx = pointer.x,
           cy = pointer.y;
-        $$(".snap-target,.flow-drop", sheet).forEach((node) =>
-          node.classList.remove("snap-target", "flow-drop"),
+        $$(".snap-target,.flow-drop,.text-snap-target-muted", sheet).forEach((node) =>
+          node.classList.remove("snap-target", "flow-drop", "text-snap-target-muted"),
         );
         $$("[data-frame]", sheet).forEach((frame) => {
           const b = paperRect(frame);
@@ -3446,45 +3715,41 @@
               frame: frame.dataset.frame,
               placement: cy < b.y + 8 ? "above" : "inside",
             };
-            frame.classList.add("snap-target");
+            targetObject = b;
           }
         });
-        const body = $(
-            ".rank-body,.grid-body,.relation-map,.compat-body",
-            sheet,
-          ),
-          bounds = paperRect(body);
-        if (pointer.x >= bounds.x && pointer.x <= bounds.x + bounds.width) {
-          const zones = [
-            { y: bounds.y, placement: "layout-top", element: body },
-            {
-              y: bounds.y + bounds.height,
-              placement: "layout-bottom",
-              element: body,
-            },
-          ];
-          if (doc.type === 3)
-            $$("[data-component]", body).forEach((component) => {
-              const b = paperRect(component);
-              zones.push({
-                y: b.y - 10,
-                placement: "before:" + component.dataset.component,
-                element: component,
-              });
-            });
-          const zone = zones.sort(
-            (a, b) => Math.abs(a.y - pointer.y) - Math.abs(b.y - pointer.y),
-          )[0];
-          if (zone && Math.abs(zone.y - pointer.y) < 16) {
+        // Full-row edges take priority only within their narrow insertion zone.
+        if (cx >= bounds.x && cx <= bounds.x + bounds.width) {
+          const zone = zones.reduce((nearest, item) =>
+            Math.abs(item.y - cy) < Math.abs(nearest.y - cy) ? item : nearest,
+          );
+          if (Math.abs(zone.y - cy) < 16) {
+            $$(".snap-target", sheet).forEach((frame) => frame.classList.remove("snap-target"));
             target = { placement: zone.placement };
-            zone.element.classList.add("flow-drop");
-            zone.element.dataset.flowDrop =
-              zone.placement === "layout-bottom" ? "after" : "before";
+            targetObject = paperRect(zone.element);
           }
         }
-        fitSheet();
+        const token = target && (target.frame || "") + ":" + target.placement;
+        if (target && !previewCache.has(token)) {
+          previewCache.set(token, measureTextDrop(previewDoc, key, target, origin));
+        }
+        const destination = target && previewCache.get(token);
+        preview.hidden = !destination;
+        el.classList.toggle("text-snap-pending", Boolean(destination));
+        if (destination) {
+          if (destination.object) {
+            targetObject = destination.object;
+            $('[data-frame="' + target.frame + '"]', sheet).classList.add("text-snap-target-muted");
+          }
+          for (const [selector, rect] of [[".text-snap-object", targetObject], [".text-snap-destination", destination]]) {
+            Object.assign($(selector, preview).style, { left: rect.x + "px", top: rect.y + "px", width: rect.width + "px", height: rect.height + "px" });
+          }
+          $("span", preview).textContent = target.frame ? (target.placement === "above" ? "框上方" : "框内") : target.placement === "layout-top" ? (doc.type === 2 ? "页面顶部" : "排版上方") : target.placement === "layout-bottom" ? "排版下方" : "组件之间";
+        }
       },
       (e, moved) => {
+        preview.remove();
+        el.classList.remove("text-snap-pending");
         if (!moved || e.type === "pointercancel") {
           if (block) {
             delete doc.textBoxes[key];
@@ -4038,10 +4303,82 @@
       ratio: img.width / img.height,
     };
   }
+  async function importRelationImages(files, target) {
+    const doc = documents[2],
+      version = ++relationImportVersion,
+      batch = Boolean(target.batch),
+      participant = batch ? null : doc.participants.find((p) => "node-" + p.id === target.key),
+      before = JSON.stringify(doc.participants);
+    if (batch && (files.length < 3 || files.length > 24)) {
+      notify("请一次选择 3–24 张头像图片");
+      return;
+    }
+    if (!batch && !participant) {
+      notify("这个角色已被移除，请重新选择头像");
+      return;
+    }
+    if (batch && doc.participants.some((p) => !participantIsEmpty(doc, p)) &&
+        !window.confirm("批量导入将按所选图片顺序替换头像，并将人数调整为 " + files.length +
+          (files.length < doc.participants.length ? "。超出人数的末尾角色将被移除，其连线将不再显示" : "") + "。是否继续？")) return;
+    const button = $("#batchAvatars");
+    if (button) { button.disabled = true; button.setAttribute("aria-busy", "true"); }
+    try {
+      // Decode into temporary storage; commit the ordered list once, never per image.
+      const images = [];
+      for (const file of batch ? files : files.slice(0, 1)) images.push(await readImage(file));
+      if (version !== relationImportVersion) return;
+      if (active !== 2 || documents[2] !== doc || JSON.stringify(doc.participants) !== before) {
+        notify("角色内容已更改，未应用本次导入；请重新选择图片");
+        return;
+      }
+      flushHistory();
+      if (batch) {
+        const previous = doc.participants;
+        doc.participants = images.map((image, i) => {
+          const next = previous[i] || createParticipant(doc, i);
+          next.image = { ...next.image, src: image.src };
+          delete next.image.originalSrc;
+          delete next.image.crop;
+          return next;
+        });
+        for (const removed of previous.slice(images.length)) {
+          const key = "node-" + removed.id;
+          delete doc.fills[key];
+          for (const [id, box] of Object.entries(doc.textBoxes)) if (box.frame === key) {
+            delete doc.textBoxes[id];
+            delete doc.texts[id];
+          }
+        }
+        bindParticipants(doc);
+        selected = null;
+        setLinkMode(false);
+      } else {
+        participant.image = { ...participant.image, src: images[0].src };
+        delete participant.image.originalSrc;
+        delete participant.image.crop;
+      }
+      refreshSheet();
+      if (batch) renderProperties();
+      renderSelection();
+      recordHistory();
+      notify(batch ? "已按顺序导入 " + images.length + " 个头像" : "已替换头像");
+    } catch (error) {
+      notify(error.message || "图片导入未完成，请重试");
+    } finally {
+      if (version === relationImportVersion && $("#batchAvatars")) {
+        $("#batchAvatars").disabled = false;
+        $("#batchAvatars").removeAttribute("aria-busy");
+      }
+    }
+  }
   $("#imageUpload").onchange = async (event) => {
     const files = [...event.target.files],
       target = imageTarget;
     if (!files.length || !target) return;
+    if (target.type === 2) {
+      await importRelationImages(files, target);
+      return;
+    }
     const doc = documents[target.type];
     let added = 0,
       failed = "";
@@ -4137,6 +4474,7 @@
     flushHistory();
     if (historyIndex <= 0) return;
     documents[active] = JSON.parse(history[--historyIndex]);
+    bindParticipants(documents[active]);
     selected = null;
     savedRange = null;
     render();
@@ -4145,6 +4483,7 @@
   function redo() {
     if (historyIndex >= history.length - 1) return;
     documents[active] = JSON.parse(history[++historyIndex]);
+    bindParticipants(documents[active]);
     selected = null;
     savedRange = null;
     render();
@@ -4159,14 +4498,12 @@
       event.shiftKey ? redo() : undo();
     }
     if (event.key === "Escape") {
-      linkMode = false;
-      linkStart = null;
-      $("#linkMode").classList.remove("active");
-      $$(".link-start", sheet).forEach((e) => e.classList.remove("link-start"));
+      setLinkMode(false);
     }
   });
   $("#homeButton").onclick = () => {
     if (active !== null) flushHistory();
+    setLinkMode(false);
     active = null;
     selected = null;
     savedRange = null;
@@ -4188,12 +4525,58 @@
       if (!delta) $("#canvasViewport").scrollLeft = 0;
       fitSheet();
     };
+  let previewExport = null, exportRevision = 0;
+  function updateExportButton() {
+    $("#downloadButton").innerHTML = icon("image") + "生成预览";
+    icons();
+  }
+  function resetExportDelivery() {
+    exportRevision++;
+    $("#downloadButton").disabled = false;
+    updateExportButton();
+  }
+  $("#exportDialog").addEventListener("close", resetExportDelivery);
   $("#exportButton").onclick = () => {
+    resetExportDelivery();
     flushHistory();
     fitSheet();
     $("#exportDialog").showModal();
   };
-  $("#exportScale").onchange = fitSheet;
+  $("#exportScale").onchange = () => { resetExportDelivery(); fitSheet(); };
+  $("#exportFormat").onchange = resetExportDelivery;
+  $("#exportPreview").addEventListener("close", () => {
+    $("#exportPreviewImage").removeAttribute("src");
+    previewExport?.dispose();
+    previewExport = null;
+  });
+  $("#closeExportPreview").onclick = () => $("#exportPreview").close();
+  async function deliverPreview(action) {
+    const result = previewExport, buttons = [$("#saveExport"), $("#shareExport")];
+    if (!result || buttons.some((button) => button.disabled)) return;
+    const statusMessage = $("#exportPreviewStatus");
+    statusMessage.hidden = true;
+    buttons.forEach((button) => { button.disabled = true; });
+    try {
+      const status = await result[action]();
+      if (result !== previewExport) return;
+      if (status === "unsupported") {
+        $("#shareExport").hidden = true;
+        statusMessage.textContent = window.isSecureContext
+          ? "当前浏览器不支持文件分享，可保存至文件或长按图片存入相册"
+          : "当前 HTTP 页面无法调用系统分享，请通过 HTTPS 打开；也可保存至文件或长按图片存入相册";
+        statusMessage.hidden = false;
+      }
+    } catch (error) {
+      if (result === previewExport) {
+        statusMessage.textContent = "操作未完成，可重试或长按图片保存至手机相册";
+        statusMessage.hidden = false;
+      }
+    } finally {
+      if (result === previewExport) buttons.forEach((button) => { button.disabled = false; });
+    }
+  }
+  $("#saveExport").onclick = () => deliverPreview("save");
+  $("#shareExport").onclick = () => deliverPreview("share");
   async function prepareExportImages(copy, scale) {
     // html2canvas does not implement object-fit, so rasterize each fitted image first.
     for (const image of $$("img", copy)) {
@@ -4223,70 +4606,82 @@
     }
   }
   $("#downloadButton").onclick = async () => {
-    const button = $("#downloadButton");
+    const button = $("#downloadButton"), revision = exportRevision;
     button.disabled = true;
     button.textContent = "正在生成…";
     let copy;
     try {
-      if (typeof window.html2canvas !== "function")
-        throw new Error("导出组件未加载，请刷新后重试");
-      await document.fonts.ready;
-      copy = sheet.cloneNode(true);
-      copy.id = "exportSheet";
-      copy.classList.add("render-copy");
-      Object.assign(copy.style, {
-        position: "absolute",
-        left: "-10000px",
-        top: "0",
-        transform: "none",
-      });
-      $$("[contenteditable]", copy).forEach((el) =>
-        el.removeAttribute("contenteditable"),
-      );
-      $$("[data-html2canvas-ignore]", copy).forEach((el) => el.remove());
-      document.body.append(copy);
-      const scale = Number($("#exportScale").value);
-      await prepareExportImages(copy, scale);
-      const canvas = await window.html2canvas(copy, {
-        scale,
-        backgroundColor: current().background,
-        logging: false,
-        width: copy.offsetWidth,
-        height: copy.offsetHeight,
-        windowWidth: Math.max(1400, copy.offsetWidth + 100),
-        windowHeight: copy.offsetHeight + 100,
-        scrollX: 0,
-        scrollY: 0,
-      });
-      const format = $("#exportFormat").value,
-        blob = await new Promise((resolve) =>
-          canvas.toBlob(resolve, "image/" + format, 0.94),
+      let result;
+      {
+        if (typeof window.html2canvas !== "function")
+          throw new Error("导出组件未加载，请刷新后重试");
+        await document.fonts.ready;
+        copy = sheet.cloneNode(true);
+        copy.id = "exportSheet";
+        copy.classList.add("render-copy");
+        Object.assign(copy.style, {
+          position: "absolute",
+          left: "-10000px",
+          top: "0",
+          transform: "none",
+        });
+        $$("[contenteditable]", copy).forEach((el) =>
+          el.removeAttribute("contenteditable"),
         );
-      if (!blob) throw new Error("图片生成失败");
-      const actual = blob.type.split("/")[1],
-        url = URL.createObjectURL(blob),
-        link = document.createElement("a");
-      link.href = url;
-      link.download =
-        "QuestMaker-" +
-        names[active] +
-        "." +
-        (actual === "jpeg" ? "jpg" : actual);
-      document.body.append(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
+        $$("[data-html2canvas-ignore]", copy).forEach((el) => el.remove());
+        document.body.append(copy);
+        const scale = Number($("#exportScale").value);
+        await prepareExportImages(copy, scale);
+        const canvas = await window.html2canvas(copy, {
+          scale,
+          backgroundColor: current().background,
+          logging: false,
+          width: copy.offsetWidth,
+          height: copy.offsetHeight,
+          windowWidth: Math.max(1400, copy.offsetWidth + 100),
+          windowHeight: copy.offsetHeight + 100,
+          scrollX: 0,
+          scrollY: 0,
+        });
+        const format = $("#exportFormat").value,
+          blob = await new Promise((resolve) =>
+            canvas.toBlob(resolve, "image/" + format, 0.94),
+          );
+        if (!blob) throw new Error("图片生成失败");
+        const actual = blob.type.split("/")[1];
+        result = { blob, actual, format, filename:
+          "QuestMaker-" + names[active] + "." + (actual === "jpeg" ? "jpg" : actual) };
+      }
+      if (revision !== exportRevision || !$("#exportDialog").open) return;
+      const generated = window.QuestMakerExport.create(result.blob, result.filename);
+      let previewURL;
+      try {
+        previewURL = await generated.previewURL();
+      } catch (error) {
+        generated.dispose();
+        throw error;
+      }
+      if (revision !== exportRevision || !$("#exportDialog").open) {
+        generated.dispose();
+        return;
+      }
+      previewExport?.dispose();
+      previewExport = generated;
+      $("#exportPreviewImage").src = previewURL;
+      $("#shareExport").hidden = !previewExport.canShare();
+      $("#shareExport").disabled = false;
+      $("#saveExport").disabled = false;
+      $("#exportPreviewStatus").hidden = true;
       $("#exportDialog").close();
-      notify(
-        actual === format ? "图片已导出" : "当前浏览器已使用 PNG 格式导出",
-      );
+      $("#exportPreview").showModal();
     } catch (error) {
-      notify(error.message || "导出失败，请重试");
+      if (revision === exportRevision) notify(error.message || "导出失败，请重试");
     } finally {
       copy?.remove();
-      button.disabled = false;
-      button.innerHTML = icon("download") + "下载图片";
-      icons();
+      if (revision === exportRevision) {
+        button.disabled = false;
+        updateExportButton();
+      }
     }
   };
   new ResizeObserver(fitSheet).observe($(".stage"));

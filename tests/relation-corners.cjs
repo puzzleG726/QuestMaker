@@ -20,7 +20,7 @@ const sharp = require(path.join(modules, 'sharp'));
   try {
     await page.goto('file://' + path.resolve('index.html')); await page.locator('[data-open="2"]').click();
     for (const count of [3, 8, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]) {
-      await page.locator('#nodeCount').fill(String(count)); await page.locator('#nodeCount').dispatchEvent('change'); await settle();
+      await page.locator('#nodeCount').evaluate((el,v)=>{el.value=v;el.dispatchEvent(new Event('input',{bubbles:true}));},String(count)); await page.locator('#nodeCount').dispatchEvent('change'); await settle();
       assert.deepEqual(await overlaps(), [], `Default ${count} people`);
       assert(await page.locator('#sheet [data-image]').evaluateAll(es => es.every(e => e.offsetWidth === 66 && e.offsetHeight === 66)));
       if (count >= 14) {
@@ -42,18 +42,18 @@ const sharp = require(path.join(modules, 'sharp'));
     const name = '颜色分类与关系说明'.repeat(18);
     await text('legend-code-0').fill(name); await settle();
     assert.deepEqual(await overlaps(), [], 'Long upper-right legend');
-    await page.locator('#legendPosition').selectOption('bottom-left'); await settle();
+    await page.locator('#legendPosition [data-option="bottom-left"]').click(); await settle();
     assert.deepEqual(await overlaps(), [], 'Long lower-left legend extends downward');
     assert(await page.locator('#sheet').evaluate(el => {
       const p = el.getBoundingClientRect();
       return [...el.querySelectorAll('.rich,.watermark')].every(e => { const r = e.getBoundingClientRect(); return r.top >= p.top && r.bottom <= p.bottom; });
     }), 'All expanded text remains inside the export bounds');
     await page.screenshot({ path: path.join(out, 'overflow.png'), fullPage: true });
-    await page.locator('#exportButton').click(); const pending = page.waitForEvent('download'); await page.locator('#downloadButton').click();
+    await page.locator('#exportButton').click(); const pending = page.waitForEvent('download'); await page.locator('#downloadButton').click(); await page.locator('#saveExport').click(); await page.locator('#closeExportPreview').click();
     const file = await pending, filename = path.join(out, 'overflow-export.png'); await file.saveAs(filename);
     const meta = await sharp(filename).metadata(), s = await size(); assert.equal(meta.height, s.height * 2); assert.equal(meta.width, s.width * 2);
     await text('title').fill('我们的关系图'); await text('respondent').fill('填表人：'); await text('legend-code-0').fill('本命');
-    await page.locator('#legendPosition').selectOption('top-right'); await settle();
+    await page.locator('#legendPosition [data-option="top-right"]').click(); await settle();
     assert.deepEqual(await size(), normal, 'Removing long text restores compact canvas');
     await page.setViewportSize({ width: 390, height: 844 }); await settle();
     assert.deepEqual(await overlaps(), []); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));

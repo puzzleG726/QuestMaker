@@ -24,7 +24,7 @@ jobs:
       - name: Stage public files only
         run: |
           mkdir -p _site/vendor
-          cp index.html app.js styles.css LICENSE _site/
+          cp index.html app.js export-delivery.js styles.css LICENSE _site/
           cp vendor/README.md vendor/html2canvas.min.js vendor/html2canvas-LICENSE vendor/lucide.min.js vendor/lucide-LICENSE _site/vendor/
           touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4

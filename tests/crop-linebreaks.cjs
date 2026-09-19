@@ -97,7 +97,7 @@ const sharp = require(path.join(modules, 'sharp'));
     assert.equal(await page.locator('#cropDimensions').innerText(), '600 × 400 px', 'Cancelled pointer resize restores crop');
     await drag({ x: v.x + 600 * v.scale, y: v.y + 400 * v.scale }, { x: v.x + 300 * v.scale, y: v.y + 200 * v.scale });
     await page.locator('#applyCrop').click(); meta = await pixels(await source()).metadata(); assert(Math.abs(meta.width - 300) < 2 && Math.abs(meta.height - 200) < 2, 'Corner drag changes selected source area');
-    await page.locator('#imageShape').selectOption('circle'); await page.locator('#imageFit').selectOption('contain'); await crop(); await page.keyboard.press('Escape'); assert(await page.locator('#cropDialog').isHidden()); assert.equal(await page.locator('#imageFit').inputValue(), 'contain');
+    await page.locator('#imageShape [data-option="circle"]').click(); await page.locator('#imageFit').selectOption('contain'); await crop(); await page.keyboard.press('Escape'); assert(await page.locator('#cropDialog').isHidden()); assert.equal(await page.locator('#imageFit').inputValue(), 'contain');
     await upload('#replaceImage', stripes); await crop(); await page.locator('#resetCrop').click(); assert.equal(await page.locator('#cropDimensions').innerText(), '600 × 400 px'); await page.locator('#cancelCrop').click();
 
     for (const [mode, key] of [[0, 'rank-0-0'], [2, 'node-0'], [3, 'portrait-0']]) {
@@ -108,9 +108,9 @@ const sharp = require(path.join(modules, 'sharp'));
       const data = await page.locator(selector).getAttribute('src'), result = await pixels(data).metadata(); assert.equal(result.width, result.height);
       if (mode === 0) assert(await page.locator('#sheet .rank-picture').evaluate(el => Math.abs(el.offsetHeight - el.offsetWidth) < 2));
     }
-    await open(1); await page.locator('#sheet [data-image="grid-0"]').click(); await page.locator('#imageShape').selectOption(''); await page.locator('#imageFit').selectOption('cover');
+    await open(1); await page.locator('#sheet [data-image="grid-0"]').click(); await page.locator('#imageShape [data-option=""]').click(); await page.locator('#imageFit').selectOption('cover');
     await crop(); v = await view(); await drag({ x: v.x + 300 * v.scale, y: v.y + 200 * v.scale }, { x: v.x + 100 * v.scale, y: v.y + 200 * v.scale }); await page.locator('#applyCrop').click();
-    await page.locator('#exportButton').click(); const pending = page.waitForEvent('download'); await page.locator('#downloadButton').click(); const download = await pending; await download.saveAs(path.join(out, 'cropped-export.png'));
+    await page.locator('#exportButton').click(); const pending = page.waitForEvent('download'); await page.locator('#downloadButton').click(); await page.locator('#saveExport').click(); await page.locator('#closeExportPreview').click(); const download = await pending; await download.saveAs(path.join(out, 'cropped-export.png'));
     const cropBox = await page.locator('#sheet [data-image="grid-0"] img').evaluate(el => {
       const root = el.closest('.sheet'), r = el.getBoundingClientRect(), p = root.getBoundingClientRect(), scale = p.width / root.offsetWidth;
       return { left: Math.round((r.left - p.left + r.width * .9) / scale * 2), top: Math.round((r.top - p.top + r.height * .5) / scale * 2), width: 1, height: 1 };

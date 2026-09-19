@@ -19,7 +19,7 @@ const {chromium}=require(path.join(modules,'playwright'));
   try{
     await page.goto('file://'+path.resolve('index.html'));
     await open(0);await select('rank-title-0');await size(34);await equalSize('rank-title-0',34);
-    await page.locator('#cols').fill('2');await page.locator('#cols').dispatchEvent('change');await equalSize('rank-title-0',34);
+    await page.locator('#cols').evaluate(el=>{el.value='2';el.dispatchEvent(new Event('input',{bubbles:true}));});await page.locator('#cols').dispatchEvent('change');await equalSize('rank-title-0',34);
     await open(1);await open(0);await equalSize('rank-title-0',34);
     for(const [type,key] of [[0,'rank-title-0'],[1,'grid-caption-0'],[2,'title'],[2,'node-name-0'],[3,'person-0']]){
       await open(type);await select(key);await size(24);await equalSize(key,24);

@@ -37,7 +37,7 @@ const sharp=require(path.join(modules,'sharp'));
     await select('title',4,6);await begin('title',true);await paint('#aa22cc');
     const before=await colors('title');assert.equal(before[2].color,'rgb(34, 136, 238)');assert.equal(before[4].color,'rgb(170, 34, 204)');assert.equal(before[0].color,base[0].color);
     await page.locator('#undoButton').click();assert.equal((await colors('title'))[4].color,base[4].color);await page.locator('#redoButton').click();assert.deepEqual(await colors('title'),before);
-    await page.locator('#rows').fill('2');await page.locator('#rows').dispatchEvent('change');assert.deepEqual(await colors('title'),before);
+    await page.locator('#rows').evaluate(el=>{el.value='2';el.dispatchEvent(new Event('input',{bubbles:true}));});await page.locator('#rows').dispatchEvent('change');assert.deepEqual(await colors('title'),before);
     // A range across existing spans changes only those characters and preserves other formatting.
     await select('title',3,5);await page.locator('#fontSize').fill('28');await page.locator('#fontSize').dispatchEvent('change');await page.locator('#boldButton').click();
     await select('title',3,5);await begin('title');await paint('#d97706');
@@ -46,7 +46,7 @@ const sharp=require(path.join(modules,'sharp'));
     await text('grid-caption-0').fill('第一段\n第二段');await select('grid-caption-0',0,3);await begin('grid-caption-0');await paint('#e03050');const secondOffset=(await text('grid-caption-0').textContent()).indexOf('第二段');await select('grid-caption-0',secondOffset,secondOffset+3);await begin('grid-caption-0');await paint('#3060e0');
     assert.equal((await colors('grid-caption-0'))[0].color,'rgb(224, 48, 80)');assert.equal((await colors('grid-caption-0'))[secondOffset].color,'rgb(48, 96, 224)');assert((await text('grid-caption-0').innerText()).includes('\n'));
     await page.screenshot({path:'/tmp/questmaker-rich-color.png',fullPage:true});
-    await page.locator('#exportButton').click();const wait=page.waitForEvent('download');await page.locator('#downloadButton').click();await (await wait).saveAs('/tmp/questmaker-rich-color-export.png');
+    await page.locator('#exportButton').click();const wait=page.waitForEvent('download');await page.locator('#downloadButton').click(); await page.locator('#saveExport').click(); await page.locator('#closeExportPreview').click();await (await wait).saveAs('/tmp/questmaker-rich-color-export.png');
     const pixels=await sharp('/tmp/questmaker-rich-color-export.png').removeAlpha().raw().toBuffer();let red=0,blue=0;for(let i=0;i<pixels.length;i+=3){if(Math.abs(pixels[i]-224)<5&&Math.abs(pixels[i+1]-48)<5&&Math.abs(pixels[i+2]-80)<5)red++;if(Math.abs(pixels[i]-48)<5&&Math.abs(pixels[i+1]-96)<5&&Math.abs(pixels[i+2]-224)<5)blue++;}assert(red>50&&blue>50,'Export preserves both paragraph colors');
     for(const [mode,frame] of [[0,'rank-0-0'],[1,'grid-0'],[2,'node-0'],[3,'portrait-0']]){
       await open(mode);await page.locator('#sheet [data-image="'+frame+'"]').click();await page.locator('#addFrameText').click();const key='frame-'+frame;
