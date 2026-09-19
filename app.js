@@ -603,6 +603,37 @@
       "#999999"
     );
   }
+  function edgeLabelGeometry(g) {
+    const point = (t) => ({
+      x: (1 - t) ** 2 * g.s.x + 2 * (1 - t) * t * g.c.x + t ** 2 * g.e.x,
+      y: (1 - t) ** 2 * g.s.y + 2 * (1 - t) * t * g.c.y + t ** 2 * g.e.y,
+    });
+    // Locate half the rendered path length, including asymmetric curves.
+    const lengths = [0], steps = 128;
+    let previous = g.s;
+    for (let i = 1; i <= steps; i++) {
+      const next = point(i / steps);
+      lengths.push(lengths[i - 1] + Math.hypot(next.x - previous.x, next.y - previous.y));
+      previous = next;
+    }
+    const half = lengths[steps] / 2;
+    let index = 1;
+    while (index < steps && lengths[index] < half) index++;
+    const span = lengths[index] - lengths[index - 1],
+      t = span ? (index - 1 + (half - lengths[index - 1]) / span) / steps : .5,
+      midpoint = point(t),
+      dx = 2 * ((1 - t) * (g.c.x - g.s.x) + t * (g.e.x - g.c.x)),
+      dy = 2 * ((1 - t) * (g.c.y - g.s.y) + t * (g.e.y - g.c.y));
+    let angle = Math.atan2(dy, dx) * 180 / Math.PI;
+    if (angle > 90) angle -= 180;
+    if (angle < -90) angle += 180;
+    const radians = angle * Math.PI / 180;
+    return { x: midpoint.x + 8 * Math.sin(radians), y: midpoint.y - 8 * Math.cos(radians), angle };
+  }
+  function edgeLabelStyle(g) {
+    const label = edgeLabelGeometry(g);
+    return "left:" + label.x + "px;top:" + label.y + "px;--edge-label-angle:" + label.angle + "deg";
+  }
   function endpointHTML(style, p, angle, color, width) {
     if (style === "circle")
       return (
@@ -708,9 +739,7 @@
     if (selected?.type === "edge") selected.element = replacement;
     const label = $('[data-edge-label="' + index + '"]', sheet);
     if (label) {
-      const geometry = edgeGeometry(doc, edge);
-      label.style.left = geometry.label.x + "px";
-      label.style.top = geometry.label.y + "px";
+      label.style.cssText = edgeLabelStyle(edgeGeometry(doc, edge));
     }
   }
   function relationHTML(doc) {
@@ -718,18 +747,14 @@
       labels = "";
     doc.edges.forEach((edge, i) => {
       if ([edge.from, edge.to].some((id) => id != null && !doc.participants.some((p) => p.id === id))) return;
-      const g = edgeGeometry(doc, edge), color = edgeColor(doc, edge);
+      const g = edgeGeometry(doc, edge);
       edges += relationEdgeHTML(doc, edge, i);
       if (edge.textKey)
         labels +=
           '<div class="edge-text" data-edge-label="' +
           i +
-          '" style="left:' +
-          g.label.x +
-          "px;top:" +
-          g.label.y +
-          "px;color:" +
-          color +
+          '" style="' +
+          edgeLabelStyle(g) +
           '">' +
           rich(doc, edge.textKey, "文字") +
           "</div>";

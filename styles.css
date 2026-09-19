@@ -148,8 +148,8 @@
 .relation-map.compact-ring .relation-node>.frame-group{margin-bottom:3px}
 .edge-control{fill:white;stroke:#9d83b8;stroke-width:2;display:none;cursor:grab;pointer-events:all;touch-action:none}
 .relation-edge.selected .edge-control{display:block}
-.edge-text{position:absolute;transform:translate(-50%,-100%);margin-top:-13px;width:max-content;max-width:180px;min-width:28px;text-align:center;z-index:4;background:var(--paper-bg)}
-.edge-text .rich{font-size:18px}
+.edge-text{position:absolute;transform:translate(-50%,-100%) rotate(var(--edge-label-angle,0deg));transform-origin:50% 100%;width:max-content;max-width:180px;min-width:28px;text-align:center;z-index:4;background:transparent}
+.edge-text .rich,.edge-text .rich *{font-size:14px!important;color:#000!important;text-shadow:0 0 2px #fff,3px 0 #fff,-3px 0 #fff,0 3px #fff,0 -3px #fff,2px 2px #fff,-2px 2px #fff,2px -2px #fff,-2px -2px #fff}
 .render-copy .edge-control{display:none!important}
 .compat-widgets{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-flow:row dense;grid-auto-rows:1px;gap:0 34px;align-items:start;margin-bottom:-25px}
 .compat-widgets>.compat-names,.compat-widgets>.slot-full{grid-column:1/-1}
