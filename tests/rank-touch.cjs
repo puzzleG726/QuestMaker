@@ -1,0 +1,118 @@
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const { chromium } = require(path.join(process.env.HOME, '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'));
+
+(async () => {
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    for (const width of [390, 820, 1194]) {
+      const page = await browser.newPage({ viewport: { width, height: 1000 }, hasTouch: true });
+      const errors = [];
+      page.on('pageerror', e => errors.push(e.message));
+      const cdp = await page.context().newCDPSession(page);
+      const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const geometry = () => page.locator('#sheet .rank-row').evaluateAll(rows => rows.map(row => [row.style.height, row.style.gridTemplateColumns]));
+      async function gesture(locator, dx, dy, cancel = false) {
+        await locator.scrollIntoViewIfNeeded();
+        const b = await locator.boundingBox(), x = b.x + b.width / 2, y = b.y + b.height / 2;
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + dx, y: y + dy }] });
+        await settle();
+        await cdp.send('Input.dispatchTouchEvent', { type: cancel ? 'touchCancel' : 'touchEnd', touchPoints: [] });
+        await settle();
+      }
+      await page.goto('file://' + path.resolve('index.html'));
+      await page.locator('[data-open="0"]').click();
+      await settle();
+      const colored = page.locator('#sheet [data-image="rank-tag-0"]');
+      await colored.tap({ position: { x: 5, y: 5 } });
+      assert.equal(await colored.getAttribute('aria-pressed'), 'true');
+      assert.equal(await page.locator('#cellFill').inputValue(), '#ef8b8c');
+      assert(await page.locator('#replaceImage').isVisible());
+      assert(await page.locator('#addFrameText').isVisible());
+      assert.equal(await page.locator('[data-picture-align]').count(), 3);
+      await page.locator('#cellFill').evaluate(el => { el.value = '#88ccaa'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+      assert.equal(await colored.evaluate(el => el.style.backgroundColor), 'rgb(136, 204, 170)');
+      await page.locator('#imageShape [data-option="rounded"]').tap();
+      assert((await colored.getAttribute('class')).includes('rounded'));
+      await page.locator('#sheet [data-text="rank-title-0"]').tap();
+      assert(await page.locator('#fontSize').isVisible());
+      await colored.tap({ position: { x: 8, y: 8 } });
+      const image = await page.evaluate(() => {
+        const canvas = document.createElement('canvas'); canvas.width = 100; canvas.height = 100;
+        const ctx = canvas.getContext('2d'); ctx.fillStyle = '#2474aa'; ctx.fillRect(0, 0, 100, 100);
+        return canvas.toDataURL().split(',')[1];
+      });
+      const chooser = page.waitForEvent('filechooser');
+      await page.locator('#replaceImage').tap();
+      await (await chooser).setFiles({ name: 'test.png', mimeType: 'image/png', buffer: Buffer.from(image, 'base64') });
+      await page.locator('#sheet .rank-picture').waitFor();
+      await settle();
+      const picture = page.locator('#sheet .rank-picture').first();
+      const contained = await picture.evaluate(el => {
+        const p = el.getBoundingClientRect(), cell = document.querySelector('#sheet [data-frame="rank-tag-0"]').getBoundingClientRect();
+        return p.left >= cell.left - 1 && p.right <= cell.right + 1 && p.top >= cell.top - 1 && p.bottom <= cell.bottom + 1;
+      });
+      assert(contained, 'colored-cell image stays within its bounds');
+      await picture.tap({ position: { x: 5, y: 5 } });
+      assert(await page.locator('#cropImage').isEnabled());
+      await page.locator('#cropImage').tap();
+      assert(await page.locator('#cropDialog').isVisible());
+      await page.keyboard.press('Escape');
+      const before = await geometry();
+      await gesture(page.locator('#sheet .row-divider').first(), 0, 30);
+      assert.deepEqual(await geometry(), before, 'ordinary touch near row border must not resize');
+      await gesture(page.locator('#sheet .col-divider').first(), 25, 0);
+      assert.deepEqual(await geometry(), before, 'ordinary touch near column border must not resize');
+      await page.locator('#rankResizeMode').tap();
+      const rowGrip = page.locator('#sheet .row-divider .rank-resize-grip').first();
+      await rowGrip.scrollIntoViewIfNeeded();
+      const hit = await rowGrip.boundingBox();
+      assert(Math.abs(hit.width - 44) < 1 && Math.abs(hit.height - 44) < 1);
+      await gesture(rowGrip, 0, 3);
+      assert.deepEqual(await geometry(), before, 'small finger movement is not resize');
+      await gesture(rowGrip, 0, 20);
+      assert.notDeepEqual(await geometry(), before, 'explicit row handle resizes');
+      const afterRow = await geometry();
+      await gesture(page.locator('#sheet .col-divider .rank-resize-grip').first(), 20, 0);
+      assert.notDeepEqual(await geometry(), afterRow, 'explicit column handle resizes');
+      const afterCol = await geometry();
+      await gesture(rowGrip, 0, 25, true);
+      assert.deepEqual(await geometry(), afterCol, 'cancel rolls back resize');
+      await page.locator('#rankResizeMode').tap();
+      assert.equal(await rowGrip.isVisible(), false);
+      await page.locator('#sheet [data-image="rank-0-0"]').tap({ position: { x: 5, y: 5 } });
+      const whiteChooser = page.waitForEvent('filechooser');
+      await page.locator('#replaceImage').tap();
+      await (await whiteChooser).setFiles({ name: 'white.png', mimeType: 'image/png', buffer: Buffer.from(image, 'base64') });
+      await page.waitForFunction(() => document.querySelectorAll('#sheet .rank-picture').length === 2);
+      await settle();
+      const whiteContained = await page.locator('#sheet .rank-picture').last().evaluate(el => {
+        const p = el.getBoundingClientRect(), cell = document.querySelector('#sheet [data-frame="rank-0-0"]').getBoundingClientRect();
+        return p.left >= cell.left - 1 && p.right <= cell.right + 1 && p.top >= cell.top - 1 && p.bottom <= cell.bottom + 1;
+      });
+      assert(whiteContained, 'white-cell import unchanged');
+      await colored.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `/tmp/questmaker-rank-touch-${width}.png` });
+      assert.deepEqual(errors, []);
+      await page.close();
+    }
+    const desktop = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+    await desktop.goto('file://' + path.resolve('index.html'));
+    await desktop.locator('[data-open="0"]').click();
+    assert.equal(await desktop.locator('#rankResizeMode').isVisible(), false);
+    const divider = desktop.locator('#sheet .row-divider').first();
+    await divider.scrollIntoViewIfNeeded();
+    const rect = await divider.boundingBox();
+    const oldHeight = await desktop.locator('#sheet .rank-row').first().evaluate(el => el.style.height);
+    await desktop.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    await desktop.mouse.down();
+    await desktop.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2 + 20, { steps: 4 });
+    await desktop.mouse.up();
+    assert.notEqual(await desktop.locator('#sheet .rank-row').first().evaluate(el => el.style.height), oldHeight);
+    await desktop.locator('#undoButton').click();
+    assert.equal(await desktop.locator('#sheet .rank-row').first().evaluate(el => el.style.height), oldHeight);
+    await desktop.close();
+    console.log('PASS: colored frame touch selection, shared properties/import/alignment/crop, text selection, border scroll protection, explicit 44px resize handles, movement threshold, pointercancel on phone/tablet.');
+  } finally { await browser.close(); }
+})().catch(e => { console.error(e); process.exitCode = 1; });

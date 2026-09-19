@@ -36,7 +36,9 @@
 .rank-cell .above-text{color:#29272d}
 .rank-body{position:relative;gap:5px;flex:none}
 .rank-row{flex:none;min-height:80px}
-.rank-tag{flex-direction:column;gap:4px;overflow:hidden;padding:10px 6px}
+.rank-tag{display:block;overflow:visible;padding:0;background:transparent;color:#171717}
+.rank-labels{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:10px 6px;pointer-events:none;z-index:6}
+.rank-labels .rich{pointer-events:auto}
 .rank-tag .rich{font-size:var(--auto-font-size,26px);font-weight:650;line-height:1.4;max-width:100%}
 .rank-number{font-size:20px;font-weight:650;line-height:24px}
 .rank-cell{min-height:0}
@@ -47,6 +49,19 @@
 .table-bottom{bottom:-7px;left:0;right:0;height:15px;cursor:ns-resize}
 .table-corner{right:-7px;bottom:-7px;width:18px;height:18px;cursor:nwse-resize;z-index:16;background:linear-gradient(135deg,transparent 55%,#a68abb 55%,#a68abb 62%,transparent 62%,transparent 73%,#a68abb 73%,#a68abb 80%,transparent 80%)}
 .rank-handle:hover{background-color:#ac91c633}
+.rank-resize-grip,.properties .rank-resize-toggle{display:none}
+@media(any-pointer:coarse){
+  .properties .rank-resize-toggle{display:inline-flex;min-height:44px;touch-action:manipulation}
+  .properties .rank-resize-toggle[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:#fff}
+  .rank-body>.rank-handle{pointer-events:none;touch-action:auto;background:none}
+  .rank-resizing .rank-handle>.rank-resize-grip{display:flex;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--rank-touch-size,44px);min-width:0;height:var(--rank-touch-size,44px);min-height:0;padding:0;background:#f0eaf7;border:1px solid #a889c2;color:#6e5486;pointer-events:auto;touch-action:none}
+  .rank-resizing .rank-handle>.rank-resize-grip svg{width:var(--rank-touch-icon,18px);height:var(--rank-touch-icon,18px)}
+  .rank-resizing .row-divider>.rank-resize-grip{left:0;transform:translateY(-50%)}
+  .rank-resizing .col-divider>.rank-resize-grip{top:0;transform:translateX(-50%)}
+  .rank-resizing .row-divider:before,.rank-resizing .col-divider:before{content:"";position:absolute;pointer-events:none;border-color:#a889c2;border-style:dashed;border-width:0}
+  .rank-resizing .row-divider:before{left:0;right:0;top:50%;border-top-width:1px}
+  .rank-resizing .col-divider:before{top:0;bottom:0;left:50%;border-left-width:1px}
+}
 .rank-picture{position:absolute;z-index:5;padding:0;min-height:0;background:transparent;border:0;border-radius:0;touch-action:none;cursor:grab}
 .rank-picture:hover{background:transparent;outline:1px solid #b89dcd}
 .rank-picture img{display:block;width:100%;height:100%;object-fit:contain;pointer-events:none}
@@ -219,7 +234,30 @@
   .paper-info{font-size:12px}.canvas-zoom{flex-basis:100%;justify-content:flex-end}
   .canvas-zoom .icon-button,.toolbar .icon-button,.header-actions .icon-button{width:44px;min-width:44px;min-height:44px}
   .toolbar select,.properties select,.properties input[type=text],.properties input[type=number]{font-size:16px;min-height:44px}
-  .properties .field{font-size:14px}.properties button{min-height:44px}.properties input[type=color]{width:44px;height:36px}
+  .properties .field{font-size:14px}.properties button{min-height:44px}
+}
+@media(max-width:650px),(any-pointer:coarse){
+  .properties input[type=color]{appearance:none;-webkit-appearance:none;display:block;flex:0 0 44px;width:44px;min-width:44px;max-width:44px;height:44px;margin:0;padding:7px;border:1px solid var(--line);border-radius:6px;background:#fff;touch-action:manipulation}
+  .properties input[type=color]::-webkit-color-swatch-wrapper{padding:0}
+  .properties input[type=color]::-webkit-color-swatch{border:1px solid #0002;border-radius:3px}
+  .properties input[type=color]::-moz-color-swatch{border:1px solid #0002;border-radius:3px}
+  .properties #legendList{display:grid;gap:10px;min-width:0}
+  .properties .legend-edit{grid-template-columns:44px minmax(0,1fr);gap:6px;margin:0;min-width:0}
+  .properties .legend-edit.editing{grid-template-columns:44px 44px minmax(0,1fr) 44px}
+  .properties .legend-edit .small-icon{width:44px;min-width:44px;height:44px;padding:12px;touch-action:manipulation}
+  .properties .legend-edit .legend-grip{touch-action:none}
+  .properties .legend-edit input[type=text]{height:44px;padding:8px;font-size:16px;line-height:24px}
+  .properties .legend-edit input[readonly]{padding-left:4px}
+  .properties .section-heading:has(#editLegends) h3{margin:0}
+  .properties #editLegends,.properties #addLegend{min-height:44px;touch-action:manipulation}
+  .properties #addLegend{align-self:stretch;width:100%}
+}
+@media(min-width:651px) and (any-pointer:coarse){
+  .properties .legend-edit.editing{grid-template-columns:44px minmax(0,1fr) 44px;row-gap:4px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  .properties .legend-edit.editing input[type=color]{grid-area:1 / 1}
+  .properties .legend-edit.editing input[type=text]{grid-area:1 / 2 / 2 / 4}
+  .properties .legend-edit.editing [data-delete-legend]{grid-area:2 / 2;justify-self:end}
+  .properties .legend-edit.editing .legend-grip{grid-area:2 / 3}
 }
 @media(max-width:650px){
   #lineToolbar{display:flex;flex:1 1 100%;min-width:0;max-width:100%;gap:4px;align-items:center;padding-top:8px}

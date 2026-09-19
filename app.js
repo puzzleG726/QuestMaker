@@ -136,6 +136,7 @@
     (item, i) => (item.name = ["喜欢", "看情况", "讨厌"][i]),
   );
   let legendEditing = false,
+    rankResizeMode = false,
     activeLegendId = "code-0",
     suppressClick = false;
   let active = null,
@@ -259,7 +260,10 @@
       "</div>"
     );
   }
-  function imageBox(doc, key, classes = "") {
+  function frameFill(doc, key) {
+    return doc.fills[key] || (key.startsWith("rank-tag-") ? rankColors[Number(key.split("-").at(-1)) % 5] : "#ffffff");
+  }
+  function imageBox(doc, key, classes = "", overlay = "") {
     const v = doc.images[key];
     const attached = Object.keys(doc.textBoxes).filter(
       (id) => doc.textBoxes[id].frame === key,
@@ -280,7 +284,7 @@
       '" data-image="' +
       key +
       '" aria-label="选择图片框" aria-pressed="false" style="background-color:' +
-      (doc.fills[key] || "#ffffff") +
+      frameFill(doc, key) +
       '">' +
       (v?.src
         ? '<img src="' +
@@ -289,7 +293,7 @@
           (v.fit || "cover") +
           '">'
         : "") +
-      "</button>" +
+      "</button>" + overlay +
       inside
         .map((id, i) =>
           textBoxHTML(doc, id, inside.length === 1 ? 50 : 30 + i * 40),
@@ -419,15 +423,14 @@
           doc.rankWidths.map((w) => w + "px").join(" ") +
           ";height:" +
           doc.rowHeights[r] +
-          'px"><div class="rank-tag" data-fill="rank-tag-' +
+          'px"><div class="rank-cell rank-tag" data-fill="rank-tag-' +
           r +
-          '" style="background:' +
-          (doc.fills["rank-tag-" + r] || rankColors[r % 5]) +
-          '"><span class="rank-number">' +
+          '">' +
+          imageBox(doc, "rank-tag-" + r, "", '<div class="rank-labels"><span class="rank-number">' +
           (r + 1) +
           "</span>" +
           rich(doc, "rank-title-" + r, "等级 " + (r + 1)) +
-          "</div>" +
+          "</div>") + "</div>" +
           Array.from({ length: doc.cols }, (_, c) => {
             const key = "rank-" + r + "-" + c;
             return (
@@ -447,25 +450,27 @@
       Array.from(
         { length: doc.rows - 1 },
         (_, r) =>
-          '<div class="row-divider rank-handle" data-resize="row" data-resize-index="' +
-          r +
-          '" data-divider="' +
-          r +
-          '" style="top:' +
-          (g.ys[r + 1] - 10) +
-          'px" data-html2canvas-ignore></div>',
+          rankResizeHandle("row", r, "top:" + (g.ys[r + 1] - 10) + "px"),
       ).join("") +
       Array.from(
         { length: doc.cols },
         (_, c) =>
-          '<div class="col-divider rank-handle" data-resize="col" data-resize-index="' +
-          c +
-          '" style="left:' +
-          (g.xs[c + 1] - 10) +
-          'px" data-html2canvas-ignore></div>',
+          rankResizeHandle("col", c, "left:" + (g.xs[c + 1] - 10) + "px"),
       ).join("") +
-      '<div class="table-right rank-handle" data-resize="width" data-html2canvas-ignore></div><div class="table-bottom rank-handle" data-resize="height" data-html2canvas-ignore></div><div class="table-corner rank-handle" data-resize="both" data-html2canvas-ignore></div></div>'
+      rankResizeHandle("width") + rankResizeHandle("height") + rankResizeHandle("both") + "</div>"
     );
+  }
+  function rankResizeHandle(kind, index = 0, style = "") {
+    const classes = { row: "row-divider", col: "col-divider", width: "table-right", height: "table-bottom", both: "table-corner" },
+      labels = { row: "调整行高", col: "调整列宽", width: "调整表格宽度", height: "调整表格高度", both: "调整表格大小" };
+    return '<div class="' + classes[kind] + ' rank-handle" data-resize="' + kind + '" data-resize-index="' + index +
+      (kind === "row" ? '" data-divider="' + index : '') + '" style="' + style + '" data-html2canvas-ignore>' +
+      '<button type="button" class="rank-resize-grip" aria-label="' + labels[kind] + '">' +
+      icon(kind === "both" ? "move-diagonal-2" : ["row", "height"].includes(kind) ? "move-vertical" : "move-horizontal") + '</button></div>';
+  }
+  function rankCellAddress(key) {
+    const parts = key.split("-");
+    return parts[1] === "tag" ? { row: Number(parts[2]), col: -1 } : { row: Number(parts[1]), col: Number(parts[2]) };
   }
   function rankPictureHTML(doc, p, g = rankGeometry(doc)) {
     const w = Math.min(p.width, doc.rankWidths[p.col + 1] - 12),
@@ -1029,6 +1034,7 @@
     );
   }
   function renderSheet(doc, target) {
+    target.classList.toggle("rank-resizing", doc.type === 0 && rankResizeMode && target === sheet);
     if (doc.type === 0) rankGeometry(doc);
     if (doc.type === 2) doc.paperWidth = relationGeometry(doc.nodeCount).paper;
     target.style.height = doc.type === 2 ? doc.paperWidth + "px" : "";
@@ -1245,8 +1251,9 @@
       scale = target.getBoundingClientRect().width / target.offsetWidth;
     if (!scale) return;
     for (let row = 0; row < doc.rows; row++)
-      for (let col = 0; col < doc.cols; col++) {
-        const frame = $('[data-frame="rank-' + row + "-" + col + '"]', target),
+      for (let col = -1; col < doc.cols; col++) {
+        const key = col === -1 ? "rank-tag-" + row : "rank-" + row + "-" + col,
+          frame = $('[data-frame="' + key + '"]', target),
           r = frame.getBoundingClientRect(),
           items = doc.rankPictures
             .filter((p) => p.row === row && p.col === col)
@@ -1361,6 +1368,8 @@
         width = sheet.offsetWidth,
         scale = Math.min(1, available / width) * viewZoom[active];
       sheet.style.transform = "scale(" + scale + ")";
+      sheet.style.setProperty("--rank-touch-size", 44 / scale + "px");
+      sheet.style.setProperty("--rank-touch-icon", 18 / scale + "px");
       $("#sheetFrame").style.width = width * scale + "px";
       $("#sheetFrame").style.height = sheet.offsetHeight * scale + "px";
       $("#zoomOut").disabled = viewZoom[active] <= 1;
@@ -1377,6 +1386,7 @@
   function openEditor(type) {
     if (active !== null) flushHistory();
     active = type;
+    rankResizeMode = false;
     selected = null;
     savedRange = null;
     setLinkMode(false);
@@ -1490,7 +1500,8 @@
             doc.rows * 500 + (doc.rows - 1) * 5,
           ),
         ) +
-        "</div>";
+        '</div><button type="button" id="rankResizeMode" class="rank-resize-toggle" aria-pressed="' + rankResizeMode + '">' +
+        icon(rankResizeMode ? "check" : "scaling") + (rankResizeMode ? "完成调整" : "调整表格") + '</button>';
     if (doc.type === 1)
       layout += field(
         "格子比例",
@@ -1552,6 +1563,13 @@
       ) +
       "</div></section>" +
       legendPanel(doc);
+    const rankToggle = $("#rankResizeMode");
+    if (rankToggle) rankToggle.onclick = () => {
+      rankResizeMode = !rankResizeMode;
+      sheet.classList.toggle("rank-resizing", rankResizeMode);
+      renderProperties();
+      icons();
+    };
     ["rows", "cols", "nodeCount", "people"].forEach((key) => {
       const el = $("#" + key);
       if (!el) return;
@@ -1974,7 +1992,7 @@
         field(
           "填充颜色",
           '<input id="cellFill" type="color" value="' +
-            (doc.fills[key] || "#ffffff") +
+            frameFill(doc, key) +
             '">',
         ) +
         visualOptionGroup("imageShape", "图片框形状", value.shape || "", [
@@ -2551,9 +2569,9 @@
   }
   function renderRankAlignment(doc, host) {
     const picture = doc.rankPictures.find((p) => p.id === selected.key),
-      parts = selected.key.split("-"),
-      row = picture?.row ?? Number(parts[1]),
-      col = picture?.col ?? Number(parts[2]);
+      address = rankCellAddress(selected.key),
+      row = picture?.row ?? address.row,
+      col = picture?.col ?? address.col;
     if (!Number.isFinite(row) || !Number.isFinite(col)) return;
     const key = row + "-" + col,
       section = document.createElement("section");
@@ -3198,11 +3216,6 @@
       setSelected({ type: "image", key, element: image });
       return;
     }
-    const fill = event.target.closest(".rank-tag");
-    if (fill && !event.target.closest("[data-text]")) {
-      setSelected({ type: "fill", key: fill.dataset.fill, element: fill });
-      return;
-    }
     const component = event.target.closest("[data-component]");
     if (component && !event.target.closest("[data-text]"))
       setSelected({ type: "component", id: component.dataset.component });
@@ -3292,6 +3305,7 @@
       grip = event.target.closest("[data-drag-text]"),
       picture = event.target.closest("[data-picture]");
     if (resize) {
+      if (event.pointerType !== "mouse" && (!rankResizeMode || !event.target.closest(".rank-resize-grip"))) return;
       flushHistory();
       const doc = current(),
         before = structuredClone(doc),
@@ -3301,9 +3315,12 @@
         y = event.clientY,
         scale = sheet.getBoundingClientRect().width / sheet.offsetWidth,
         g = rankGeometry(doc);
+      let resizeStarted = event.pointerType === "mouse";
       dragSession(
         event,
         (e) => {
+          if (!resizeStarted && Math.hypot(e.clientX - x, e.clientY - y) < 8) return;
+          resizeStarted = true;
           const dx = (e.clientX - x) / scale,
             dy = (e.clientY - y) / scale;
           if (kind === "row") {
@@ -3337,7 +3354,14 @@
           fitRankPictures(doc);
           refreshSheet();
         },
-        () => {
+        (e) => {
+          if (e.type === "pointercancel") {
+            doc.rankWidths = before.rankWidths;
+            doc.rowHeights = before.rowHeights;
+            doc.paperWidth = before.paperWidth;
+            doc.rankPictures = before.rankPictures;
+            refreshSheet();
+          }
           renderProperties();
           recordHistory();
         },
@@ -3841,7 +3865,7 @@
   function fitRankPictures(doc) {
     const g = rankGeometry(doc);
     for (let row = 0; row < doc.rows; row++)
-      for (let col = 0; col < doc.cols; col++) {
+      for (let col = -1; col < doc.cols; col++) {
         const items = doc.rankPictures
           .filter((p) => p.row === row && p.col === col)
           .sort((a, b) => a.x - b.x);
@@ -3904,13 +3928,12 @@
           col =
             g.xs.findIndex(
               (left, i) =>
-                i > 0 &&
                 i <= doc.cols &&
                 x >= left &&
                 x <= left + doc.rankWidths[i],
             ) - 1;
         destination =
-          row >= 0 && col >= 0
+          row >= 0 && col >= -1
             ? {
                 row,
                 col,
@@ -4453,9 +4476,7 @@
               delete picture.crop;
             }
           } else {
-            const [, r, c] = target.key.split("-"),
-              row = Number(r),
-              col = Number(c),
+            const { row, col } = rankCellAddress(target.key),
               items = doc.rankPictures.filter(
                 (p) => p.row === row && p.col === col,
               );
@@ -4556,6 +4577,12 @@
     }
     if (event.key === "Escape") {
       setLinkMode(false);
+      if (rankResizeMode) {
+        rankResizeMode = false;
+        sheet.classList.remove("rank-resizing");
+        renderProperties();
+        icons();
+      }
     }
   });
   $("#homeButton").onclick = () => {
