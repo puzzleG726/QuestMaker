@@ -136,7 +136,7 @@
     (item, i) => (item.name = ["喜欢", "看情况", "讨厌"][i]),
   );
   let legendEditing = false,
-    rankResizeMode = false,
+    rankResizeTarget = null,
     activeLegendId = "code-0",
     suppressClick = false;
   let active = null,
@@ -153,6 +153,8 @@
     toastTimer,
     scaleFrame;
   const viewZoom = [1, 1, 1, 1];
+  const fitWholeCanvas = [false, false, false, false];
+  const minViewZoom = 0.01;
   let cropState = null;
   let closeLinePopovers = () => {};
   const sheet = $("#sheet");
@@ -280,7 +282,7 @@
       '"><button class="image-box ' +
       classes +
       " " +
-      (v?.shape || "") +
+      (doc.type === 2 && key.startsWith("node-") ? "circle" : v?.shape || "") +
       '" data-image="' +
       key +
       '" aria-label="选择图片框" aria-pressed="false" style="background-color:' +
@@ -312,7 +314,7 @@
       ? "left:" + box.x + "px;top:" + box.y + "px;width:" + box.width + "px"
       : above || flow
         ? ""
-        : "top:" + top + "%";
+        : "top:" + top + "%;--inside-max-height:" + 2 * Math.min(top, 100 - top) + "%";
     return (
       '<div class="text-box ' +
       (flow
@@ -464,13 +466,25 @@
     const classes = { row: "row-divider", col: "col-divider", width: "table-right", height: "table-bottom", both: "table-corner" },
       labels = { row: "调整行高", col: "调整列宽", width: "调整表格宽度", height: "调整表格高度", both: "调整表格大小" };
     return '<div class="' + classes[kind] + ' rank-handle" data-resize="' + kind + '" data-resize-index="' + index +
-      (kind === "row" ? '" data-divider="' + index : '') + '" style="' + style + '" data-html2canvas-ignore>' +
+      (kind === "row" ? '" data-divider="' + index : '') + '" style="' + style + '" role="button" tabindex="0" aria-label="' + labels[kind] + '" aria-pressed="false" data-html2canvas-ignore>' +
       '<button type="button" class="rank-resize-grip" aria-label="' + labels[kind] + '">' +
       icon(kind === "both" ? "move-diagonal-2" : ["row", "height"].includes(kind) ? "move-vertical" : "move-horizontal") + '</button></div>';
   }
   function rankCellAddress(key) {
     const parts = key.split("-");
     return parts[1] === "tag" ? { row: Number(parts[2]), col: -1 } : { row: Number(parts[1]), col: Number(parts[2]) };
+  }
+  function highlightRankResize(target = sheet) {
+    $$(".rank-handle", target).forEach(handle => {
+      const active = target === sheet && rankResizeTarget === handle.dataset.resize + ":" + handle.dataset.resizeIndex;
+      handle.classList.toggle("rank-resize-selected", active);
+      handle.setAttribute("aria-pressed", String(active));
+    });
+  }
+  function selectRankResize(handle) {
+    rankResizeTarget = handle ? handle.dataset.resize + ":" + handle.dataset.resizeIndex : null;
+    highlightRankResize();
+    if (handle) setSelected(null);
   }
   function rankPictureHTML(doc, p, g = rankGeometry(doc)) {
     const w = Math.min(p.width, doc.rankWidths[p.col + 1] - 12),
@@ -1033,8 +1047,26 @@
       "</div>"
     );
   }
+  function recoverRankAboveText(doc, target) {
+    if (doc.type !== 0) return [];
+    const pending = [], root = target.getBoundingClientRect(), scale = root.width / target.offsetWidth;
+    for (const [id, box] of Object.entries(doc.textBoxes)) {
+      if (box.placement !== "above") continue;
+      const element = target.querySelector('[data-text-box="' + CSS.escape(id) + '"]'),
+        rect = element?.getBoundingClientRect(), frame = box.frame,
+        visible = target.querySelector(".rank-body") && rect?.width > 0 && scale > 0;
+      Object.assign(box, {
+        frame: null, placement: "free",
+        x: visible ? (rect.left - root.left) / scale : Number.isFinite(box.x) ? box.x : 48,
+        y: visible ? (rect.top - root.top) / scale : Number.isFinite(box.y) ? box.y : 48,
+        width: visible ? rect.width / scale : Number.isFinite(box.width) && box.width > 0 ? box.width : 240,
+      });
+      if (!visible && frame) pending.push({ id, frame });
+    }
+    return pending;
+  }
   function renderSheet(doc, target) {
-    target.classList.toggle("rank-resizing", doc.type === 0 && rankResizeMode && target === sheet);
+    const recoveredRankText = recoverRankAboveText(doc, target);
     if (doc.type === 0) rankGeometry(doc);
     if (doc.type === 2) doc.paperWidth = relationGeometry(doc.nodeCount).paper;
     target.style.height = doc.type === 2 ? doc.paperWidth + "px" : "";
@@ -1073,8 +1105,22 @@
             "rank-number",
           )),
       );
+    highlightRankResize(target);
     fitRankLabels(target);
     if (target.isConnected) alignFrameHeadings(target);
+    // With no previous DOM, recover the former heading near its real cell, never create a frame.
+    for (const { id, frame } of recoveredRankText) {
+      const anchor = target.querySelector('[data-frame="' + CSS.escape(frame) + '"]'),
+        text = target.querySelector('[data-text-box="' + CSS.escape(id) + '"]'),
+        root = target.getBoundingClientRect(), scale = root.width / target.offsetWidth;
+      if (!anchor || !text || !scale) continue;
+      const rect = anchor.getBoundingClientRect(), box = doc.textBoxes[id];
+      box.width = rect.width / scale;
+      text.style.width = box.width + "px";
+      box.x = (rect.left - root.left) / scale;
+      box.y = Math.max(0, (rect.top - root.top) / scale - text.offsetHeight - 8);
+      Object.assign(text.style, { left: box.x + "px", top: box.y + "px" });
+    }
   }
   function fitRankLabels(target) {
     if (!target.isConnected) return;
@@ -1364,15 +1410,22 @@
         }
       }
       fitRankLabels(sheet);
-      const available = $("#canvasViewport").clientWidth,
+      const viewport = $("#canvasViewport"),
+        available = viewport.clientWidth,
         width = sheet.offsetWidth,
-        scale = Math.min(1, available / width) * viewZoom[active];
+        baseScale = Math.min(1, available / width);
+      if (fitWholeCanvas[active]) {
+        const viewportHeight = window.visualViewport?.height || window.innerHeight,
+          availableHeight = Math.max(100, viewportHeight - Math.max(0, viewport.getBoundingClientRect().top) - 24);
+        viewZoom[active] = Math.min(1, availableHeight / sheet.offsetHeight / baseScale);
+      }
+      const scale = baseScale * viewZoom[active];
       sheet.style.transform = "scale(" + scale + ")";
       sheet.style.setProperty("--rank-touch-size", 44 / scale + "px");
       sheet.style.setProperty("--rank-touch-icon", 18 / scale + "px");
       $("#sheetFrame").style.width = width * scale + "px";
       $("#sheetFrame").style.height = sheet.offsetHeight * scale + "px";
-      $("#zoomOut").disabled = viewZoom[active] <= 1;
+      $("#zoomOut").disabled = viewZoom[active] <= minViewZoom;
       $("#zoomIn").disabled = viewZoom[active] >= 4;
       $("#zoomLevel").textContent = Math.round(scale * 100) + "%";
       $("#dimensions").textContent = width + " × " + sheet.offsetHeight;
@@ -1386,7 +1439,7 @@
   function openEditor(type) {
     if (active !== null) flushHistory();
     active = type;
-    rankResizeMode = false;
+    rankResizeTarget = null;
     selected = null;
     savedRange = null;
     setLinkMode(false);
@@ -1481,27 +1534,10 @@
         "</div>";
     if (doc.type === 0)
       layout +=
-        '<div class="field-row">' +
-        field(
-          "表格宽度",
-          numberField(
-            "rankWidth",
-            rankGeometry(doc).width,
-            56 + doc.cols * 101,
-            1200,
-          ),
-        ) +
-        field(
-          "表格高度",
-          numberField(
-            "rankHeight",
-            rankGeometry(doc).height,
-            doc.rows * 80 + (doc.rows - 1) * 5,
-            doc.rows * 500 + (doc.rows - 1) * 5,
-          ),
-        ) +
-        '</div><button type="button" id="rankResizeMode" class="rank-resize-toggle" aria-pressed="' + rankResizeMode + '">' +
-        icon(rankResizeMode ? "check" : "scaling") + (rankResizeMode ? "完成调整" : "调整表格") + '</button>';
+        '<div class="rank-dimensions">' +
+        discreteSliderField("rankWidth", icon("move-horizontal") + "表格宽度 (px)", Math.round(rankGeometry(doc).width), 56 + doc.cols * 101, 1200) +
+        discreteSliderField("rankHeight", icon("move-vertical") + "表格高度 (px)", Math.round(rankGeometry(doc).height), doc.rows * 80 + (doc.rows - 1) * 5, doc.rows * 500 + (doc.rows - 1) * 5) +
+        '</div>';
     if (doc.type === 1)
       layout += field(
         "格子比例",
@@ -1563,13 +1599,6 @@
       ) +
       "</div></section>" +
       legendPanel(doc);
-    const rankToggle = $("#rankResizeMode");
-    if (rankToggle) rankToggle.onclick = () => {
-      rankResizeMode = !rankResizeMode;
-      sheet.classList.toggle("rank-resizing", rankResizeMode);
-      renderProperties();
-      icons();
-    };
     ["rows", "cols", "nodeCount", "people"].forEach((key) => {
       const el = $("#" + key);
       if (!el) return;
@@ -1672,13 +1701,21 @@
     });
     ["Width", "Height"].forEach((dimension) => {
       const el = $("#rank" + dimension);
-      if (el)
+      if (el) {
+        el.onpointerdown = () => flushHistory();
+        el.oninput = () => {
+          updateDiscreteSlider(el);
+          resizeRank(doc, dimension.toLowerCase(), Number(el.value));
+          refreshSheet();
+        };
         el.onchange = () => {
           resizeRank(doc, dimension.toLowerCase(), Number(el.value));
           refreshSheet();
           renderProperties();
+          $("#rank" + dimension).focus({ preventScroll: true });
           recordHistory();
         };
+      }
     });
     $$("[data-add-component]").forEach((button) => {
       button.onclick = () => addCompatComponent(button.dataset.addComponent);
@@ -1929,6 +1966,15 @@
     highlightSelection();
     renderSelection();
   }
+  function clearCanvasSelection() {
+    flushHistory();
+    if (sheet.contains(document.activeElement)) document.activeElement.blur();
+    savedRange = null;
+    window.getSelection()?.removeAllRanges();
+    selectRankResize(null);
+    if (linkMode) setLinkMode(false);
+    setSelected(null);
+  }
   function renderSelection() {
     renderLineToolbar();
     const host = $("#selectionProperties");
@@ -1995,11 +2041,11 @@
             frameFill(doc, key) +
             '">',
         ) +
-        visualOptionGroup("imageShape", "图片框形状", value.shape || "", [
+        (![0, 2].includes(doc.type) ? visualOptionGroup("imageShape", "图片框形状", value.shape || "", [
           shapeOption("", "默认"), shapeOption("square", "方形"),
           shapeOption("circle", "圆形"), shapeOption("rectangle", "长方形"),
           shapeOption("rounded", "圆角"),
-        ]) +
+        ]) : "") +
         field(
           "图片适配",
           '<select id="imageFit"><option value="cover">填满</option><option value="contain">完整显示</option></select>',
@@ -2105,6 +2151,7 @@
     applyTextPlacement(doc, key, placement, bounds);
   }
   function applyTextPlacement(doc, key, placement, bounds) {
+    if (doc.type === 0 && placement === "above") return;
     const block = textComponent(doc, key), box = doc.textBoxes[key];
     if (placement === "inside" || placement === "above") {
       if (box?.frame) box.placement = placement;
@@ -2166,7 +2213,7 @@
             "位置",
             '<select id="textPlacement"><option value="free">自由位置</option><option value="layout-top">排版上方整行</option><option value="layout-bottom">排版下方整行</option>' +
               (box?.frame
-                ? '<option value="inside">框内</option><option value="above">图片框正上方</option>'
+                ? '<option value="inside">框内</option>' + (doc.type === 0 ? '' : '<option value="above">图片框正上方</option>')
                 : "") +
               componentOptions +
               "</select>",
@@ -3098,6 +3145,11 @@
       suppressClick = false;
       return;
     }
+    const rankHandle = event.target.closest(".rank-handle");
+    if (rankHandle) {
+      selectRankResize(rankHandle);
+      return;
+    }
     if (changeBlock(event)) return;
     const doc = current(),
       image = event.target.closest("[data-image]"),
@@ -3219,8 +3271,8 @@
     const component = event.target.closest("[data-component]");
     if (component && !event.target.closest("[data-text]"))
       setSelected({ type: "component", id: component.dataset.component });
-    if (linkMode && !event.target.closest('[data-text], [data-component], button, input, select, [data-drag-text]'))
-      setLinkMode(false);
+    if (!canvasPointerMoved && !canvasPointerOnContent && !event.target.closest('[data-text], [data-component], button, input, select, textarea, [data-drag-text], [data-text-box]'))
+      clearCanvasSelection();
   });
   function setLinkMode(enabled) {
     linkMode = enabled;
@@ -3237,9 +3289,29 @@
     icons();
   }
   $("#linkMode").onclick = () => setLinkMode(!linkMode);
+  let canvasPointerStart = null, canvasPointerMoved = false, canvasPointerOnContent = false;
+  $(".stage").addEventListener("pointerdown", (event) => {
+    canvasPointerStart = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    canvasPointerMoved = false;
+    // Selecting a line can reveal a toolbar and move the canvas before pointerup.
+    canvasPointerOnContent = !!event.target.closest('[data-edge], [data-image], [data-picture], [data-text], [data-component], [data-text-box], .rank-handle, button, input, select, textarea');
+  }, true);
+  $(".stage").addEventListener("pointermove", (event) => {
+    if (canvasPointerStart?.id === event.pointerId &&
+        Math.hypot(event.clientX - canvasPointerStart.x, event.clientY - canvasPointerStart.y) > 6)
+      canvasPointerMoved = true;
+  }, true);
+  $(".stage").addEventListener("pointerup", () => { canvasPointerStart = null; }, true);
+  $(".stage").addEventListener("pointercancel", () => {
+    canvasPointerStart = null;
+    canvasPointerMoved = true;
+  }, true);
   $("#canvasViewport").addEventListener("click", (event) => {
-    if (linkMode && (event.target === event.currentTarget || event.target === $("#sheetFrame")))
-      setLinkMode(false);
+    if (!suppressClick && !canvasPointerMoved && !canvasPointerOnContent && (event.target === event.currentTarget || event.target === $("#sheetFrame")))
+      clearCanvasSelection();
+  });
+  $(".stage").addEventListener("click", (event) => {
+    if (!suppressClick && !canvasPointerMoved && !canvasPointerOnContent && event.target === event.currentTarget) clearCanvasSelection();
   });
   function dragSession(event, move, finish) {
     event.preventDefault();
@@ -3268,6 +3340,7 @@
     sheet.addEventListener("pointercancel", end);
   }
   sheet.addEventListener("pointerdown", (event) => {
+    if (rankResizeTarget && !event.target.closest(".rank-handle")) selectRankResize(null);
     const frameResize = event.target.closest("[data-resize-frame]");
     if (frameResize) {
       startFrameResize(event, frameResize.dataset.resizeFrame);
@@ -3305,7 +3378,7 @@
       grip = event.target.closest("[data-drag-text]"),
       picture = event.target.closest("[data-picture]");
     if (resize) {
-      if (event.pointerType !== "mouse" && (!rankResizeMode || !event.target.closest(".rank-resize-grip"))) return;
+      if (rankResizeTarget !== resize.dataset.resize + ":" + resize.dataset.resizeIndex) return;
       flushHistory();
       const doc = current(),
         before = structuredClone(doc),
@@ -3642,6 +3715,7 @@
     );
   }
   function measureTextDrop(source, key, destination, bounds) {
+    if (source.type === 0 && destination.placement === "above") return null;
     const doc = JSON.parse(JSON.stringify(source));
     bindParticipants(doc);
     if (destination.frame) {
@@ -3710,6 +3784,7 @@
     flushHistory();
     const original = { ...box };
     const previewDoc = JSON.parse(JSON.stringify(doc)), previewCache = new Map(), initialWidgets = widgetPositions(sheet),
+      rankFlowSource = doc.type === 0 && original.placement?.startsWith("layout-"),
       frameTargets = $$("[data-frame]", sheet).map(frame => ({ key: frame.dataset.frame, bounds: paperRect(frame) }));
     const preview = document.createElement("div");
     preview.className = "text-snap-preview";
@@ -3718,9 +3793,9 @@
     preview.innerHTML = '<div class="text-snap-object"></div><div class="text-snap-destination"></div>';
     preview.hidden = true;
     sheet.append(preview);
-    const body = $(".rank-body,.grid-body,.relation-map,.compat-body", sheet),
-      bounds = paperRect(body),
-      zones = [
+    const body = $(".rank-body,.grid-body,.relation-map,.compat-body", sheet);
+    const bounds = paperRect(body);
+    const zones = [
         { y: doc.type === 2 ? 25.6 : bounds.y, placement: "layout-top", element: body },
         { y: bounds.y + bounds.height, placement: "layout-bottom", element: body },
       ];
@@ -3754,7 +3829,7 @@
           width: origin.width,
         });
         if (el.parentElement !== $(".free-layer", sheet)) {
-          // Keep the source space while dragging so the drop targets do not move.
+          // Keep full-row insertion zones stable while previewing a cell drop separately.
           const placeholder = document.createElement("div");
           placeholder.className = el.className;
           placeholder.style.cssText = el.style.cssText;
@@ -3782,17 +3857,20 @@
         $$(".snap-target,.flow-drop,.text-snap-target-muted", sheet).forEach((node) =>
           node.classList.remove("snap-target", "flow-drop", "text-snap-target-muted"),
         );
-        frameTargets.forEach((frame) => {
+        const visibleFrames = rankFlowSource
+          ? $$("[data-frame]", sheet).map(frame => ({ key: frame.dataset.frame, bounds: paperRect(frame) }))
+          : frameTargets;
+        visibleFrames.forEach((frame) => {
           const b = frame.bounds;
           if (
             cx >= b.x &&
             cx <= b.x + b.width &&
-            cy >= b.y - 55 &&
+            cy >= b.y - (doc.type === 0 ? 0 : 55) &&
             cy <= b.y + b.height
           ) {
             target = {
               frame: frame.key,
-              placement: cy < b.y + 8 ? "above" : "inside",
+              placement: doc.type !== 0 && cy < b.y + 8 ? "above" : "inside",
             };
             targetObject = b;
           }
@@ -3805,6 +3883,7 @@
           if (Math.abs(zone.y - cy) < 16) {
             $$(".snap-target", sheet).forEach((frame) => frame.classList.remove("snap-target"));
             target = { placement: zone.placement };
+            if (rankFlowSource) body.style.removeProperty("translate");
             targetObject = paperRect(zone.element);
           }
         }
@@ -3813,6 +3892,12 @@
           previewCache.set(token, measureTextDrop(previewDoc, key, target, origin));
         }
         const destination = target && previewCache.get(token);
+        if (rankFlowSource) {
+          if (destination?.object && target.frame) {
+            const originalFrame = frameTargets.find(frame => frame.key === target.frame).bounds;
+            body.style.translate = (destination.object.x - originalFrame.x) + "px " + (destination.object.y - originalFrame.y) + "px";
+          } else body.style.removeProperty("translate");
+        }
         preview.hidden = !destination;
         el.classList.toggle("text-snap-pending", Boolean(destination));
         if (destination) {
@@ -3829,6 +3914,7 @@
       },
       (e, moved) => {
         preview.remove();
+        if (rankFlowSource) body.style.removeProperty("translate");
         clearWidgetReflow();
         el.classList.remove("text-snap-pending");
         if (!moved || e.type === "pointercancel") {
@@ -4571,18 +4657,40 @@
   $("#redoButton").onclick = redo;
   document.addEventListener("keydown", (event) => {
     if (active === null || $("#cropDialog").open) return;
+    if (["Delete", "Backspace"].includes(event.key) && selected &&
+        !event.defaultPrevented && !event.isComposing && !event.repeat &&
+        !event.metaKey && !event.ctrlKey && !event.altKey &&
+        !event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') &&
+        !$("dialog[open]")) {
+      const selector = {
+        text: "#removeText",
+        edge: "#removeEdge",
+        picture: "#deletePicture",
+        image: "#removeImage",
+        component: "#selectionProperties [data-delete-block]",
+        knob: "#selectionProperties [data-delete-block]",
+      }[selected.type];
+      const button = selector && $(selector);
+      if (button && !button.disabled) {
+        event.preventDefault();
+        flushHistory();
+        button.click();
+      }
+    }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
       event.preventDefault();
       event.shiftKey ? redo() : undo();
     }
     if (event.key === "Escape") {
       setLinkMode(false);
-      if (rankResizeMode) {
-        rankResizeMode = false;
-        sheet.classList.remove("rank-resizing");
-        renderProperties();
-        icons();
-      }
+      selectRankResize(null);
+    }
+  });
+  sheet.addEventListener("keydown", (event) => {
+    const handle = event.target.closest(".rank-handle");
+    if (handle && ["Enter", " "].includes(event.key)) {
+      event.preventDefault();
+      selectRankResize(handle);
     }
   });
   $("#homeButton").onclick = () => {
@@ -4605,8 +4713,17 @@
   ])
     $("#" + id).onclick = () => {
       if (active === null) return;
-      viewZoom[active] = delta ? clamp(viewZoom[active] + delta, 1, 4) : 1;
-      if (!delta) $("#canvasViewport").scrollLeft = 0;
+      fitWholeCanvas[active] = !delta;
+      if (delta) {
+        const zoom = viewZoom[active];
+        viewZoom[active] = clamp(
+          zoom < 1 || (zoom === 1 && delta < 0) ? zoom * (delta > 0 ? 1.25 : 0.8) : zoom + delta,
+          minViewZoom, 4,
+        );
+      } else {
+        $("#canvasViewport").scrollLeft = 0;
+        $("#canvasViewport").scrollTop = 0;
+      }
       fitSheet();
     };
   let previewExport = null, exportRevision = 0;

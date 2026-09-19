@@ -17,6 +17,16 @@ const { chromium } = require(path.join(modules, 'playwright'));
       const press = async selector => mobile ? page.locator(selector).tap() : page.locator(selector).click();
       const stroke = () => page.locator('#sheet .edge-line').getAttribute('stroke');
       const edgePath = () => page.locator('#sheet .edge-line').getAttribute('d');
+      const selectLine = async () => {
+        await page.locator('#sheet .edge-hit').scrollIntoViewIfNeeded();
+        const point = await page.locator('#sheet .edge-hit').evaluate(el => {
+          const p = el.getPointAtLength(el.getTotalLength() * .3).matrixTransform(el.getScreenCTM());
+          return { x: p.x, y: p.y };
+        });
+        if (mobile) await page.touchscreen.tap(point.x, point.y);
+        else await page.mouse.click(point.x, point.y);
+        assert.equal(await page.locator('#lineToolbar').isVisible(), true);
+      };
       await page.goto('file://' + path.resolve('index.html'));
       await press('[data-open="2"]');
       const first = '#sheet [data-image="node-0"]', second = '#sheet [data-image="node-3"]';
@@ -24,7 +34,11 @@ const { chromium } = require(path.join(modules, 'playwright'));
         assert.equal(await page.locator('#linkMode').getAttribute('aria-pressed'), String(on));
         assert.equal((await page.locator('#linkMode').innerText()).trim(), on ? '连线中' : '连线');
       };
-      const blank = async () => page.locator('#sheet .relation-map').evaluate(map => map.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+      const blank = async () => {
+        const map = await page.locator('#sheet .relation-map').boundingBox();
+        if (mobile) await page.touchscreen.tap(map.x + map.width / 2, map.y + map.height / 2);
+        else await page.mouse.click(map.x + map.width / 2, map.y + map.height / 2);
+      };
       await press(first);await press(second);
       assert.equal(await page.locator('#sheet .edge-line').count(), 0);
       assert.equal(await page.locator(second).getAttribute('aria-pressed'), 'true');
@@ -49,7 +63,7 @@ const { chromium } = require(path.join(modules, 'playwright'));
       assert.equal(await page.locator('#sheet .edge-line').count(), 1);
       await press(first);await press(second);
       assert.equal(await page.locator('#sheet .edge-line').count(), 1);
-      await page.locator('#sheet .edge-hit').click({ force: true });
+      await selectLine();
       const geometry = await edgePath();
       const bodyPoint = await page.locator('#sheet .edge-line').evaluate(el => {
         const p = el.getPointAtLength(el.getTotalLength() * .3), m = el.getScreenCTM();
@@ -70,7 +84,7 @@ const { chromium } = require(path.join(modules, 'playwright'));
       await press('#undoButton');assert.equal(await stroke(), palette[3].color);
       await press('#redoButton');assert.equal(await stroke(), palette[0].color);
       // Undo clears selection; reselect without changing the line.
-      await page.locator('#sheet .edge-hit').click({ force: true });
+      await selectLine();
       await press('#editLegends');
       await page.locator('[data-legend-color="code-0"]').evaluate(el => { el.value = '#123456'; el.dispatchEvent(new Event('input', { bubbles: true })); });
       assert.equal(await stroke(), '#123456');
